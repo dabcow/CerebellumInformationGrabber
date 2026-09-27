@@ -1,303 +1,121 @@
 # Cerebellar Layer Quantification Plugin
 
-A FIJI/ImageJ plugin for quantitative morphometric analysis of Nissl-stained cerebellar
-histology sections. All measurements are derived from user-drawn ROI geometry — no pixel
-segmentation is performed.
+[![CI](https://github.com/dabcow/CerebellumInformationGrabber/actions/workflows/ci.yml/badge.svg)](https://github.com/dabcow/CerebellumInformationGrabber/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+A FIJI/ImageJ plugin for quantitative morphometry of Nissl-stained cerebellar histology
+sections. You trace the layers as ROIs; the plugin derives every layer area, the Purkinje
+line length, and a per-lobule breakdown from that geometry. No pixel segmentation is done,
+so results depend only on your tracing and the image calibration.
 
 ---
 
-## Table of Contents
+## Contents
 
 - [What it measures](#what-it-measures)
-- [Requirements](#requirements)
-- [Setup — Java and Maven](#setup--java-and-maven)
-- [Build](#build)
-- [Install into FIJI](#install-into-fiji)
+- [Installation](#installation)
 - [User workflow](#user-workflow)
-  - [1. Open your image](#1-open-your-image)
-  - [2. Draw the ROIs](#2-draw-the-rois)
+  - [1. Open and calibrate the image](#1-open-and-calibrate-the-image)
+  - [2. Trace and name the ROIs](#2-trace-and-name-the-rois)
   - [3. Run the plugin](#3-run-the-plugin)
-- [Output table](#output-table)
-- [Overlay colours](#overlay-colours)
-- [Architecture](#architecture)
+- [How many sections you get](#how-many-sections-you-get)
+- [Several separately traced pieces](#several-separately-traced-pieces)
+- [Output](#output)
+- [Batch processing with macros](#batch-processing-with-macros)
 - [Troubleshooting](#troubleshooting)
+- [How it works](#how-it-works)
+- [Accuracy](#accuracy)
+- [Building from source](#building-from-source)
+- [Upgrading from 1.0.0](#upgrading-from-100)
+- [License](#license)
 
 ---
 
 ## What it measures
 
-| Measurement | Formula |
+| Measurement | Derived as |
 |---|---|
 | Cerebellum area | Area of the Cerebellum ROI |
 | Grey Matter area | Cerebellum − White Matter |
 | Granular Layer area | (Granular+WM) − White Matter |
 | Molecular Layer area | Grey Matter − Granular Layer |
-| Purkinje length | Arc-length of the Purkinje polyline |
+| Purkinje length | Length of the Purkinje polyline |
 
-All five are computed for the **whole cerebellum**. The last three are also computed
-individually for each fissure-defined subsection — 7 traced fissures give the standard
-**eight rodent vermis lobules (2Cb – 10Cb)**; a different fissure count works too and
-produces that many generically-labeled subsections instead (see *How many fissures?*
-below).
+All five are reported for the **whole cerebellum**. The Granular, Molecular and Purkinje
+values are also reported for every **fissure-defined section**. With 7 fissures and the ring
+pinched open at the peduncle, you get the standard **eight rodent vermis lobules (2Cb – 10Cb)**.
+Other counts are supported and are labelled generically ([details](#how-many-sections-you-get)).
 
-Results are exported as an ImageJ Results Table, a CSV file, and a formatted `.xlsx`
-workbook.
+The sections tile the grey matter exactly, so per-section areas and lengths add up to the
+whole-cerebellum totals.
 
----
-
-## Requirements
-
-| Item | Minimum version | Notes |
-|---|---|---|
-| JDK | 17 | Must be a JDK, not a JRE — see below |
-| Maven | 3.8 | |
-| FIJI / ImageJ | Any recent release | |
-| Windows / macOS / Linux | — | All platforms supported |
+Results are shown as an ImageJ Results Table and can be saved as CSV and as an Excel
+workbook. The workbook also records how the results were produced: plugin version, image,
+calibration and any warnings.
 
 ---
 
-## Setup — Java and Maven
+## Installation
 
-### Install the JDK
+**Requirements:** FIJI (or ImageJ 1.54 or newer) running on **Java 17 or newer**. FIJI
+downloads since 2025 bundle Java 21. Older FIJI installs that still run Java 8 can't load
+the plugin. Check under *Help ▸ About ImageJ…*, and if needed download a current FIJI from
+<https://fiji.sc>.
 
-Download the **JDK 21** installer (LTS release) from one of these official sources:
+1. Download `cerebellar-layer-plugin-<version>.jar` from the
+   [Releases page](https://github.com/dabcow/CerebellumInformationGrabber/releases).
+2. Copy it into FIJI's `plugins/` folder, and remove any older `cerebellar-layer-plugin-*.jar`.
 
-| Source | URL |
-|---|---|
-| Microsoft OpenJDK *(recommended for Windows)* | https://learn.microsoft.com/en-us/java/openjdk/download |
-| Adoptium | https://adoptium.net |
-| Oracle JDK | https://www.oracle.com/java/technologies/downloads/ |
-
-> **Important:** Download the **JDK**, not the JRE. The JRE does not include `javac`
-> (the Java compiler) and the build will fail if you use it.
-
-The **Windows `.msi` installer** from Microsoft or Adoptium sets `JAVA_HOME` and updates
-your `PATH` automatically. After installing, open a **new** Command Prompt and verify:
-
-```cmd
-java -version
-javac -version
-```
-
-Both commands should print a version number. If `javac` is not found, see
-[Troubleshooting](#troubleshooting).
-
-### Install Maven
-
-1. Download the **binary zip** from https://maven.apache.org/download.cgi
-2. Extract it anywhere, e.g. `C:\Program Files\Apache\maven`
-3. Add `C:\Program Files\Apache\maven\bin` to your system `PATH`
-   *(Control Panel → System → Advanced → Environment Variables → Path → Edit → New)*
-4. Open a new Command Prompt and verify:
-
-```cmd
-mvn -version
-```
-
----
-
-## Build
-
-Clone or unzip the project, then run:
-
-```cmd
-cd cerebellar-layer-plugin
-mvn package
-```
-
-Maven downloads the required dependencies (ImageJ, SciJava, Apache POI) and produces a
-single self-contained jar at:
-
-```
-target/cerebellar-layer-plugin-1.0.0.jar
-```
-
-All dependencies are bundled inside the jar so nothing else needs to be copied to FIJI.
-
-> **Behind a firewall or without internet access?** Maven needs to reach Maven Central
-> (`repo1.maven.org`) to download dependencies the first time. If that is blocked,
-> install the jars manually into your local Maven repository with `mvn install:install-file`
-> before building.
-
----
-
-## Install into FIJI
-
-1. Copy `target/cerebellar-layer-plugin-1.0.0.jar` into your FIJI `plugins/` folder.
-
-   Default locations:
-
-   | OS | Path |
+   | OS | Default location |
    |---|---|
-   | Windows | `C:\Program Files\Fiji.app\plugins\` |
+   | Windows | `C:\Program Files\Fiji.app\plugins\` (or wherever `Fiji.app` was unzipped) |
    | macOS | `/Applications/Fiji.app/plugins/` |
-   | Linux | `~/fiji/plugins/` |
+   | Linux | `~/Fiji.app/plugins/` |
 
-2. Restart FIJI, or run **Help → Refresh Menus**.
+3. Restart FIJI. The plugin appears under
+   **Plugins ▸ Cerebellar Morphometry ▸ Quantify Layers…**
 
-3. The plugin appears under:
-
-   **Plugins → Cerebellar Morphometry → Quantify Layers...**
+The jar is about 100 KB and has no dependencies of its own. It doesn't add any library to
+FIJI's classpath.
 
 ---
 
 ## User workflow
 
-### 1. Open your image
+### 1. Open and calibrate the image
 
-Open the Nissl-stained cerebellar section in FIJI.
+Open the Nissl-stained section in FIJI and set the pixel size (*Analyze ▸ Set Scale…* or
+*Image ▸ Properties…*). The plugin uses whatever calibration is present. Without one, areas
+are reported in pixel² and lengths in pixels.
 
-Set the pixel calibration if you have a known scale bar
-(*Image → Properties*, or use the *Analyze → Set Scale* tool).
-The plugin uses whatever calibration is present — without calibration, areas are reported
-in px² and lengths in px.
+> Calibrate in **µm** rather than mm. The CSV is written with 4 decimal places, which in
+> mm² can leave only two or three significant figures for a small lobule. The Excel workbook
+> always stores full precision.
 
-### 2. Draw the ROIs
+### 2. Trace and name the ROIs
 
-Open the ROI Manager (*Analyze → Tools → ROI Manager*) and draw four fixed ROIs (the
-whole-cerebellum outline, Granular+WM, White Matter, and the Purkinje line) plus one
-fissure line per split you need. (White Matter and fissures can both be skipped for a
-second or later traced piece — see *Multiple instances* below.) Matching is
-**case-insensitive**. Both full names and common lab abbreviations are accepted — use
-whichever your lab already
-uses. The order ROIs are added does not matter.
+Open the ROI Manager (*Analyze ▸ Tools ▸ ROI Manager*) and add these ROIs. Names are matched
+**case-insensitively**, and both full names and common abbreviations work. Order doesn't matter.
 
-| ROI | Type in FIJI | Accepted names (any case, examples) |
-|---|---|---|
-| Entire cerebellum outline | Closed polygon | `Cerebellum`, `cerebellum`, **`CB`**, `cb`, `CB_left` |
-| Granular layer + White Matter | Closed polygon | `Granular+WM`, `granular`, **`GL+WM`**, `GLWM`, `GL_WM`, `GL-WM`, `GL WM` |
-| White Matter only | Closed polygon | `WhiteMatter`, `white matter`, **`WM`**, `wm` |
-| Purkinje cell line | Open polyline | `Purkinje`, `purkinje`, **`PL`**, `pl` |
-| Fissure 1, 2, 3, … | Open polyline | `Fissure1`, `fissure1`, **`FL1`**, `FL_1`, `FL-1`, `fl1`; `Fissure2`/`FL2`; and so on |
+| ROI | Draw with | Accepted names (examples) | Required? |
+|---|---|---|---|
+| Whole cerebellum outline | Polygon / Freehand | `CB`, `Cerebellum`, `CB_left` | Yes |
+| Granular layer + White Matter | Polygon / Freehand | `GL+WM`, `GLWM`, `GL_WM`, `GL-WM`, `GL WM`, `Granular+WM`, `granular` | Yes |
+| Purkinje cell line | Segmented Line (or Freehand / straight Line) | `PL`, `Purkinje` | Yes |
+| White Matter only | Polygon / Freehand | `WM`, `WhiteMatter`, `white matter` | Optional¹ |
+| Fissures 1, 2, 3, … | Segmented Line (or Freehand / straight Line) | `FL1`, `FL_1`, `FL-1`, `Fissure1`, `fissure 1`, … | Optional² |
 
-**How many fissures?** Trace however many the section actually shows (at least one). Name
-extras the same way (`FL8`, `FL9`, `fissure8`, …) — there's no upper limit.
+¹ Without White Matter, the section isn't split into lobules, and its Grey Matter and
+Granular Layer values include the white-matter core (there's nothing to subtract).
+Some sections, such as a peripheral cut through cortex only, genuinely have no white-matter core.
+² Required whenever White Matter is traced (for the first piece). Trace as many as the
+section shows. There's no upper limit.
 
-How many *sections* that produces depends on the shape of the layers, and the plugin
-works it out for you (it says which in the log):
+Abbreviations are matched as whole words: `CB` matches `CB_left` but not `CBx1`, and `FL`
+doesn't match `flat`. `GL+WM` is always Granular+WM, never White Matter.
 
-- **Normally, *N* fissures give *N* sections.** Each cerebellar layer wraps all the way
-  around the white matter core, so it's a **ring**. Cutting a ring once doesn't separate
-  anything — it just opens the ring into a strip; it takes *N* cuts to get *N* pieces.
-  The practical consequence is that the two end lobules stay joined as one section.
-- **If you pinch the ring open at the peduncle** (see *Closing the loop* below), the layer
-  becomes a strip instead, and then *N* fissures give ***N+1*** sections — the two end
-  lobules separate. This is what you want for the standard scheme.
+**Example ROI Manager list** (full names work identically):
 
-**7 fissures + the peduncle pinch → 8 sections** is the standard scheme for a midline
-sagittal section of rodent vermis, and gets the familiar anatomical labels (2Cb, 3Cb,
-4/5Cb, 6Cb, 7Cb, 8Cb, 9Cb, 10Cb). That scheme doesn't apply to every section, though —
-off-midline cuts, coronal or horizontal sections, damaged tissue, and other species can
-all have a different number of visible lobules. Any section count other than 8 gets
-generic labels instead ("Section 1", "Section 2", …), since a specific anatomical name
-would be a guess.
-
-#### Multiple instances (separately-traced sections)
-
-Sometimes the tissue itself isn't one traceable outline — a piece may have broken off
-during sectioning, or the cut may capture disconnected islands of cerebellar tissue. In
-a case like that, the best approach is to trace each piece separately rather than force
-one Cerebellum/Granular+WM hierarchy over tissue that doesn't geometrically connect: for
-example, trace the two lower sections apart from the top one, each as its own set of
-ROIs.
-
-These pieces are still **one cerebellum**, just one that couldn't be outlined as a single
-connected shape — so they're pooled back together into a **single set of results**, not
-reported as separate specimens:
-
-- **Whole-cerebellum totals are summed** across every piece. One Cerebellum area, one
-  Grey Matter area, one Purkinje length, and so on, covering all the pieces together.
-- **Sections are pooled into one list.** A piece split by fissures contributes each of
-  its own subsections; a piece traced *without* fissures contributes exactly one
-  subsection — itself — because it's anatomically just one more section of the same
-  cerebellum, one that happened to need its own outline. In other words, the secondary
-  selections are **additional sections** alongside the fissure-derived ones.
-- **Labels are assigned across the pooled list.** If the pooled sections come to 8, they
-  get the standard anatomical names (2Cb … 10Cb) regardless of how they were spread
-  across pieces; any other count gets generic "Section N" names. Sections are ordered by
-  piece number first, then by arc order within each piece — so **number the pieces in
-  anatomical order** (1, 2, 3, …) to get the labels lined up correctly.
-
-An instance is identified by a leading number on every ROI name belonging to it. ROI
-names with **no** leading number belong to instance 1 — so a normal, single-section
-workflow needs no changes at all. To add a second instance, prefix every one of its ROI
-names with `2`:
-
-```
-CB          →  instance 1 Cerebellum (unprefixed = instance 1, as always)
-GL+WM       →  instance 1 Granular+WM
-WM          →  instance 1 White Matter
-PL          →  instance 1 Purkinje
-FL1 … FL7   →  instance 1 fissures
-
-2CB         →  instance 2 Cerebellum
-2GL+WM      →  instance 2 Granular+WM
-2WM         →  instance 2 White Matter
-2PL         →  instance 2 Purkinje
-2FL1 … 2FL4 →  instance 2 fissures (its own fissure count, independent of instance 1's)
-```
-
-A third instance uses `3` the same way (`3CB`, `3GL+WM`, …), and so on — there's no
-upper limit. Each instance needs all four required ROIs plus at least one fissure under
-its own number; instances don't need to have the same fissure count as each other; a
-6- or 7-fissure instance gets the standard anatomical labels, and any other count gets
-generic ones, exactly as described above, independently per instance.
-
-> **Naming caution:** because a leading number is now meaningful, avoid bare names like
-> "2Cb" or "10Cb" for anything *other* than this feature — they now mean "the Cerebellum
-> ROI for instance 2/10" rather than being ignored. This doesn't affect ROIs the plugin
-> itself adds (e.g. `2Cb_Granular` from the ROI Manager export option below), since those
-> always carry a suffix this parser doesn't match.
-
-**White Matter and fissures are both optional for secondary instances.** Instance 1
-always needs both, same as ever. A secondary instance (2, 3, …) needs neither —
-independently of each other:
-
-- **No fissures traced** for a secondary instance? It just isn't split into
-  subsections; its whole-cerebellum totals are still measured normally. Useful when a
-  second traced piece only matters for its overall extent, not lobule-level detail.
-- **No White Matter traced** for a secondary instance? Same (no subsections), and that
-  instance's Grey Matter and Granular Layer numbers won't have White Matter excluded
-  from them either, since there's nothing to subtract it from — Grey Matter reports as
-  the Cerebellum area, and Granular Layer as the Granular+WM area, unmodified. If
-  fissures were traced anyway, they're ignored (with a log note) rather than
-  partitioned: without White Matter there's no inner boundary for granular-layer cuts
-  to separate against, so attempting it would just merge subsections back together
-  rather than failing loudly.
-- **Both traced** for a secondary instance? Full normal behaviour — layer breakdown and
-  partitioning happen exactly as they would for instance 1.
-
-
-When more than one piece is detected, the overlay item names and ROI-Manager-export names
-get an `[N]` prefix per piece so they stay distinguishable on the image. The results table
-(and CSV/XLSX) stay a **single combined table** either way — there's no per-piece column,
-because the pieces are one cerebellum, not separate specimens.
-
-> **Disambiguation note:** `GL+WM` is always matched as Granular+WM, never as White Matter,
-> even though it contains the letters "WM". The plugin evaluates Granular+WM before
-> White Matter specifically to handle this case.
->
-> `CB` is matched as a whole word, so lobule labels like `2Cb` or `10Cb` in your ROI
-> Manager are never mistaken for the whole-cerebellum outline.
-
-**Example ROI Manager lists for the standard 7-fissure case — both of these work identically:**
-
-Full names:
-```
-Cerebellum
-Granular+WM
-WhiteMatter
-Purkinje
-Fissure1
-Fissure2
-Fissure3
-Fissure4
-Fissure5
-Fissure6
-Fissure7
-```
-
-Abbreviated:
 ```
 CB
 GL+WM
@@ -314,292 +132,316 @@ FL7
 
 #### Tracing tips
 
-**Cerebellum, Granular+WM, WhiteMatter** — trace as closed polygons using the
-*Polygon* or *Freehand* selection tool. Normally these are nested: White Matter ⊂
-Granular+WM ⊂ Cerebellum. It's fine — and sometimes necessary, see *Closing the loop*
-below — for White Matter or Granular+WM to reach or extend past its parent boundary
-somewhere; the plugin logs a note rather than blocking you, since that's usually
-deliberate. A very large mismatch is still worth double-checking, though, in case two
-ROIs were accidentally swapped or traced on different sections.
+**Cerebellum, Granular+WM, White Matter:** closed outlines, normally nested
+(White Matter ⊂ Granular+WM ⊂ Cerebellum). It's fine for an inner outline to reach or
+cross its parent at the peduncle (see [Closing the loop](#closing-the-loop)). The plugin
+only logs a note, since that's usually deliberate.
 
-#### Closing the loop (so the first and last subsections don't merge)
+**Purkinje line:** an open line following the row of Purkinje cell bodies from one end of
+the cerebellum to the other. Its only jobs are to be measured and to put the sections in
+anatomical order.
 
-The Cerebellum ROI is one closed outline, but the fissures and the Purkinje line only
-span the *foliated* part of it — they don't reach around to the peduncle, where the
-cerebellum attaches to the brainstem. Left alone, that means the subsections at the two
-ends of your trace (2Cb and 10Cb in the standard scheme) are still connected to each
-other through that unfissured region, and the plugin can't tell where one ends and the
-other begins: it'll report them as a single merged region instead of two.
+**Fissures:** run each line **down the centre of the fold**, starting at the **pial
+surface**, with several points following the curve of the sulcus. A single straight chord
+across a curved fold cuts through tissue instead of along the valley. Ideally trace the whole
+depth down to White Matter, but you don't have to land on any particular layer. The plugin
+extends both ends along their own direction until the cut runs from just outside the
+cerebellum into White Matter. You can trace either end first; the pial end is detected
+automatically.
 
-The fix is to let White Matter trace out to meet the Granular+WM and Cerebellum
-boundaries specifically at the peduncle, where there's no molecular or granular
-layering anyway (it's just white matter connecting to the brainstem). Doing this pinches
-the ring shut at that one point, which acts as an implicit extra cut — the first and
-last subsections separate cleanly without needing another fissure. Concretely:
+#### Closing the loop
 
-1. Trace Cerebellum, Purkinje, and the fissures as usual — Purkinje and the fissures
-   naturally stop short of the peduncle since there's no cortex to trace there.
-2. When tracing Granular+WM, extend it out to touch the Cerebellum boundary at the
-   peduncle (rather than stopping short, as you would elsewhere).
-3. When tracing White Matter, extend it out to touch (or cross) both the Granular+WM
-   and Cerebellum boundaries at that same spot.
+The Cerebellum outline is one closed shape, but the fissures and Purkinje line only span the
+foliated part. They stop short of the peduncle, where the cerebellum joins the brainstem.
+Left alone, the first and last lobules (2Cb and 10Cb) stay connected through that
+unfissured region and are reported as **one** section.
 
-If you skip this, everything still runs — you'll just see the first or last subsection
-(whichever ends up on the losing side of the merge) missing from one or both layers in
-the results, along with a FIJI log message naming it. That's your cue to extend White
-Matter a bit further at the peduncle and rerun.
+To separate them, let the outlines meet at the peduncle, where there is no cortical layering
+anyway:
 
-**Purkinje line** — trace as an open polyline following the row of Purkinje cell bodies
-from one end of the cerebellum to the other. Use the *Segmented Line* tool.
+1. Trace Cerebellum, Purkinje and the fissures as usual.
+2. Extend **Granular+WM** out to touch the Cerebellum outline at the peduncle.
+3. Extend **White Matter** out to touch or cross both the Granular+WM and Cerebellum outlines
+   at the same spot.
 
-**Fissure lines** — each line should run from the **pial surface** all the way down to
-**White Matter**, following the deepest point of the fold the whole way. You do *not*
-need to stop precisely at the Purkinje cell line — the plugin automatically finds where
-each fissure crosses it. This is deliberate: identifying the exact pial and White Matter
-edges is much easier than picking out the thin Purkinje layer partway down a fold, so
-trace the *whole* visible fold rather than trying to stop partway through it. You can
-trace either end first; the plugin detects the direction automatically. Use the
-*Segmented Line* tool.
-
-> **Important:** trace all the way to both edges, and follow the *center* of the fold
-> rather than cutting across it at an angle. A fissure line that stops short of the pial
-> surface or White Matter, or cuts across the fold diagonally instead of running along
-> its length, can fail to fully separate two neighbouring subsections — you'll see a
-> warning in the FIJI log (`Window → Log`) naming the affected layer if this happens,
-> and fewer subsection rows than expected (N+1 for N fissures) in the results table is
-> the practical symptom to watch for.
+This pinches the grey-matter ring open into a strip, which acts as one more cut.
 
 ### 3. Run the plugin
 
-Go to **Plugins → Cerebellar Morphometry → Quantify Layers...**
+Choose **Plugins ▸ Cerebellar Morphometry ▸ Quantify Layers…**. The dialog remembers your
+choices between runs.
 
-An options dialog appears:
+| Option | Effect | Macro keyword |
+|---|---|---|
+| Layer overlay (colour-coded) | Draws Grey, Granular and Molecular layers, the Purkinje line and the fissure cuts over the image | `layer_overlay` |
+| Section fills and labels | Gives each section its own translucent colour and a name label on the image | `section_fills` |
+| Add ROIs to ROI Manager | Adds one ROI per measured region ([details](#measurement-rois)) | `add_rois` |
+| Results table | Shows the results in an ImageJ Results Table | `results_table` |
+| Save CSV | Saves `<image name>.csv` | `save_csv` |
+| Save Excel workbook (.xlsx) | Saves `<image name>.xlsx`, with a "Run Info" sheet | `save_excel` |
+| Output folder | Where files are saved. Leave empty to be asked | `output_folder` |
 
-| Option | Effect |
-|---|---|
-| Show colour-coded layer overlay | Adds a vector overlay showing Grey, Granular, Molecular, and Purkinje |
-| Show per-lobule transparent fills | Adds distinct semitransparent fills for each subsection |
-| Add measurement ROIs to ROI Manager | Adds a named ROI for every number in the output table (see below) |
-| Show ImageJ Results Table | Displays the measurement table interactively in ImageJ |
-| Export CSV | Saves a UTF-8 comma-separated file |
-| Export Excel (.xlsx) | Saves a formatted Excel workbook |
-
-If either export option is checked, you will be prompted to choose a save folder. Files
-are named after the image title.
-
-### Measurement ROIs
-
-With *Add measurement ROIs to ROI Manager* checked, the plugin appends one ROI per
-measured region to the ROI Manager, alongside your original input ROIs:
-
-| Name | What it is |
-|---|---|
-| `Grey Matter`, `Granular Layer`, `Molecular Layer` | The three whole-cerebellum layers |
-| `<lobule>_Granular` | That lobule's clipped Granular Layer footprint, e.g. `2Cb_Granular` |
-| `<lobule>_Molecular` | That lobule's clipped Molecular Layer footprint |
-| `<lobule>_Purkinje` | That lobule's segment of the Purkinje line (an open polyline) |
-
-Only lobules that were actually resolved get ROIs — if partitioning couldn't cleanly
-separate every lobule (see the log-message troubleshooting entries below), the missing
-ones simply won't appear rather than adding an empty or wrong ROI. Each added ROI is an
-independent copy, so renaming, deleting, or re-measuring it in the ROI Manager has no
-effect on the plugin's own results.
-
-With more than one instance (see *Multiple instances* above), every name additionally
-gets an `[N]` prefix — e.g. `[2] 2Cb_Granular` — so names stay distinguishable across
-instances instead of colliding. A single-instance run adds no prefix.
+If warnings come up during the run, a summary dialog lists them at the end. The details are
+in the Log window (*Window ▸ Log*) and in the workbook's *Run Info* sheet. Before overwriting
+existing result files, the plugin asks first.
 
 ---
 
-## Output table
+## How many sections you get
 
-The plugin produces a table matching this layout exactly:
+The layers wrap all the way around the white-matter core, so the grey matter is a **ring**.
+The plugin detects its shape and tells you in the Log which case applies:
+
+- **Ring (not pinched):** *N* fissures give *N* sections. Cutting a ring once only opens it,
+  so the first and last lobules stay joined as one section.
+- **Strip (pinched at the peduncle, see [Closing the loop](#closing-the-loop)):** *N*
+  fissures give ***N + 1*** sections.
+
+**7 fissures + the peduncle pinch → 8 sections** is the standard scheme for a midline
+sagittal section of rodent vermis. These get the anatomical names 2Cb, 3Cb, 4/5Cb, 6Cb, 7Cb,
+8Cb, 9Cb and 10Cb, ordered along the Purkinje line from its first traced point.
+
+Any other result gets generic names ("Section 1", "Section 2", …) because a specific
+anatomical name would be a guess. That applies to off-midline, coronal or damaged sections,
+other species, and also to eight sections in which the first and last lobules are still
+joined.
+
+---
+
+## Several separately traced pieces
+
+If the tissue can't be traced as one outline (a piece broke off during sectioning, or the cut
+caught disconnected islands), trace each piece as its own set of ROIs. Prefix every ROI name
+of the second piece with `2`, the third with `3`, and so on. Unprefixed names belong to piece 1.
+
+```
+CB, GL+WM, WM, PL, FL1 … FL7        ← piece 1
+2CB, 2GL+WM, 2WM, 2PL, 2FL1 … 2FL4  ← piece 2 (its own fissure count)
+3CB, 3GL+WM, 3PL                    ← piece 3 (no WM or fissures: measured whole)
+```
+
+The pieces are parts of **one** cerebellum, so they're pooled into a single set of results:
+
+- Whole-cerebellum totals are **summed** across pieces.
+- Sections are **pooled** in piece order, then in Purkinje-line order within each piece. A
+  piece without fissures contributes itself as one section. Number the pieces in anatomical
+  order.
+- Labels are assigned across the pooled list: exactly eight sections get the standard names,
+  any other count gets generic ones.
+
+Every piece needs its own Cerebellum, Granular+WM and Purkinje ROIs. White Matter and fissures
+are optional for pieces 2, 3, …
+
+> **Naming caution:** a leading number means "piece N", so don't name anything else `2Cb` or
+> `10Cb`. Leading numbers longer than 4 digits, such as a date, are not treated as piece
+> numbers. ImageJ's default names like `0512-1024` don't match any layer and are ignored.
+
+---
+
+## Output
+
+### Results table (also CSV and Excel)
 
 ```
 Measurement  | Cerebellum | Grey Matter | Granular Layer | Molecular Layer | Purkinje
-─────────────┼────────────┼─────────────┼────────────────┼─────────────────┼──────────
-Area         | total      | total       | total          | total           | total area
+─────────────┼────────────┼─────────────┼────────────────┼─────────────────┼─────────────
+Area         | total      | total       | total          | total           | "area" ¹
 Length       |            |             |                |                 | total length
 2Cb          |            |             | area           | area            | length
 3Cb          |            |             | area           | area            | length
-4/5Cb        |            |             | area           | area            | length
-6Cb          |            |             | area           | area            | length
-7Cb          |            |             | area           | area            | length
-8Cb          |            |             | area           | area            | length
-9Cb          |            |             | area           | area            | length
+…            |            |             | …              | …               | …
 10Cb         |            |             | area           | area            | length
 ```
 
-Column headers include the calibrated unit, e.g. `Granular Layer (µm²)` and `Purkinje (µm)`.
-Empty cells carry no measurement for that row/column combination.
-All numeric values are rounded to 4 decimal places.
+Column headers carry the calibrated unit, e.g. `Granular Layer (µm²)` and `Purkinje (µm)`.
+Numbers always use a `.` decimal separator, whatever the computer's language settings. The
+CSV has 4 decimal places. The Excel workbook stores full precision and displays 4 places, with
+bold summary rows and a frozen header row and label column.
 
-This is always **one table**, even when the cerebellum was traced as several separate
-pieces (see *Multiple instances* above) — the pieces' totals are summed into the Area and
-Length rows, and their sections pooled into the subsection rows below.
+¹ A line has no real area. This cell reproduces what ImageJ's *Analyze ▸ Measure* reports for
+the Purkinje ROI (pixels visited × pixel area), for parity only.
 
-**About the Purkinje column's Area row:** a line doesn't really have an area, so this
-isn't a biologically meaningful quantity — it's included because it's exactly what
-you'd get selecting the Purkinje ROI in the ROI Manager and clicking *Measure* with Area
-checked in *Set Measurements*. ImageJ reports a line selection's "area" as the number of
-pixels its path visits, times the calibrated area per pixel, so the number here matches
-that built-in behavior rather than anything computed independently. Only the whole-line
-total is reported (not a per-lobule breakdown).
+The workbook's **Run Info** sheet records the plugin version, ImageJ and Java versions, date,
+image name and file, image size, pixel size, how each piece was partitioned, and every note
+and warning from the run.
 
-The Excel export adds bold formatting for the summary rows, auto-sized columns, and a
-frozen header row and label column for easy scrolling.
+### Overlay
 
----
-
-## Overlay colours
-
-| Layer | Colour |
+| Item | Colour |
 |---|---|
 | Grey Matter | Blue |
 | Granular Layer | Green |
 | Molecular Layer | Yellow |
 | Purkinje line | Red |
-| Partition boundaries (extended fissures) | White |
-| Per-subsection fills (optional) | 12 distinct hues, cycling if there are more subsections than colours |
+| Fissure cuts (as extended by the plugin) | White |
+| Section fills (optional) | 12 distinct hues, cycling if there are more sections, plus a name label |
 
-The overlay is non-destructive vector graphics. To remove it:
-*Image → Overlay → Remove Overlay*.
+Re-running replaces only the plugin's own overlay items. Anything else on the overlay, such as
+a scale bar, is kept. To remove the overlay entirely, use *Image ▸ Overlay ▸ Remove Overlay*.
+
+### Measurement ROIs
+
+With *Add ROIs to ROI Manager*, one ROI is added per measured region:
+
+| Name | What it is |
+|---|---|
+| `Grey Matter`, `Granular Layer`, `Molecular Layer` | The whole-cerebellum layers |
+| `<section>_Granular`, `<section>_Molecular` | That section's clipped layer, e.g. `2Cb_Granular` |
+| `<section>_Purkinje` | That section's stretch of the Purkinje line |
+| `<section>_Purkinje_1`, `_2` | The same, when a section owns two separate stretches (the wrap-around section of a ring) |
+
+Measuring these ROIs in ImageJ reproduces the table. With several pieces, names get an `[N] `
+prefix. The ROIs are tagged as plugin output, so the plugin can be re-run on the same ROI
+Manager without them being mistaken for input, even after saving and reopening the ROI set.
 
 ---
 
-## Architecture
+## Batch processing with macros
 
-```
-org.cerebellum.morphometry
-│
-├── CerebellarMorphometryPlugin   FIJI entry point, options dialog, per-instance pipeline loop
-│
-├── model/
-│   ├── LayerSet                  Validated, typed input ROI bundle (one per instance)
-│   ├── ConstructedLayers         Three Boolean-derived whole-cerebellum layer shapes
-│   ├── PartitionSet              Lobule regions with Purkinje arc-length bounds
-│   ├── MorphometryResults        Final numeric output for one instance
-│   ├── InstanceResult            Pairs an instance number with its MorphometryResults
-│   └── ValidationException       Aggregates all ROI problems into one error dialog
-│
-├── geometry/
-│   ├── ROIValidator              Name / type / nesting / instance-grouping checks  →  LayerSet per instance
-│   ├── BooleanROIProcessor       Defensive-copy ShapeRoi AND / OR / NOT + area measurement
-│   ├── GeometryUtils             Vector math, arc-length, polyline projection, interpolation
-│   ├── LayerConstructor          The three Boolean subtractions (Grey, Granular, Molecular)
-│   ├── FissurePartitioner        N fissures → N+1 subtract-and-split partitions
-│   ├── RasterSplitUtils          Pixel-mask split (connected components) used by the above
-│   ├── PartitionClipper          Clips granular/molecular shapes into per-partition footprints
-│   └── PurkinjeLengthCalculator  Calibrated arc-length, total and per-subsection
-│
-├── measurement/
-│   └── MeasurementEngine         Orchestrates the full pipeline for one instance  →  MorphometryResults
-│
-├── export/
-│   └── SpreadsheetExporter       ImageJ ResultsTable + CSV + XLSX, combining all instances
-│
-└── visualization/
-    ├── OverlayRenderer           Colour-coded vector overlay, combined across instances
-    └── RoiManagerExporter        One named ROI per measurement, added to the ROI Manager
+Every dialog option has its own macro keyword (see [the options table](#3-run-the-plugin)), so
+a run can be recorded with *Plugins ▸ Macros ▸ Record…* and replayed:
+
+```javascript
+// For each open image whose ROIs are in the ROI Manager:
+run("Quantify Layers...", "layer_overlay section_fills results_table save_csv save_excel output_folder=[C:/data/results]");
 ```
 
-### How partitioning works
-
-The lobule regions are built with a **subtract-and-split** strategy — the same
-idea as selecting a shape in the ROI Manager, subtracting a set of thin cutting lines
-from it, and using *Split* to break the result into its separate pieces — rather than by
-computing which side of each cut line is "positive." Trying to track sides explicitly
-was the source of most of the early bugs in this plugin: it only takes one place where
-two cuts cross close together for a sign test to pick the wrong side, silently swapping
-or merging entire lobules.
-
-The split itself works on a **pixel mask**, not on FIJI's vector `ShapeRoi`/`Area`
-machinery directly. That wasn't the original design — it's a direct response to a bug
-found while testing against a real traced section: `java.awt.geom.Area`, which
-`ShapeRoi`'s Boolean operations are built on, turned out to fragment even a single plain
-subtraction between two correctly-nested, non-self-crossing traced polygons into dozens
-of spurious extra pieces (verified case: `Cerebellum \ Granular+WM` on real data came
-back as 77 disjoint pieces instead of 1, with the count scaling almost linearly with how
-many points the polygons had — and zero actual crossings between the two boundaries).
-Rasterizing to a pixel mask and using ordinary 8-connected flood-fill labeling sidesteps
-that fragility completely; the same subtraction on the same data reliably comes back as
-the single connected ring the anatomy actually has.
-
-1. Each fissure is traced across the **full tissue depth** — pial surface to White
-   Matter — rather than stopping at the Purkinje line (see the tracing tip above for
-   why). The plugin then splits each fissure into a molecular portion and a granular
-   portion **at the layer boundaries the fissure actually crosses**: the molecular
-   portion runs from the pial surface to where the fissure enters Granular+WM, and the
-   granular portion from there to where it enters White Matter. Note this uses each
-   layer's *own* outline, not the Purkinje line — a cut can only sever a layer if it
-   spans that layer's full width, and the Purkinje line is a separately hand-traced curve
-   that generally doesn't sit exactly on the Granular+WM boundary. The Purkinje line is
-   still used, but only to *order* the fissures along the cerebellum.
-
-2. The **Molecular layer** (`Cerebellum` minus `Granular+WM`) is split using each
-   fissure's molecular portion, extended a small distance past its two ends to absorb
-   ordinary hand-tracing mismatch — no direction is extrapolated beyond what the user's
-   own trace already establishes.
-
-3. The **Granular layer** (`Granular+WM` minus `WhiteMatter`) is split the same way,
-   using each fissure's granular portion (crossing → White Matter end).
-
-4. For each layer, the fissure portions are thickened into thin strips and subtracted
-   from that layer's rasterized mask; connected-component labeling then finds the
-   resulting disjoint pieces. How many to expect is determined from the mask itself —
-   a **ring** (a layer with a hole in it, the normal case) yields *N* pieces from *N*
-   cuts, while an open **strip** (a ring pinched open at the peduncle) yields *N+1*.
-   Pieces are ordered by projecting each one's centroid onto the Purkinje line, and a
-   section's final region is the union of its Molecular piece and its Granular piece.
-
-5. Each section's Purkinje length is measured by asking which parts of the Purkinje line
-   fall inside that section's region — not by arc-range arithmetic. On a ring, one
-   section wraps past the end of the Purkinje line and resumes at its start, owning two
-   disjoint stretches of it; measuring by containment handles that automatically.
-
-
-If a section is traced unusually finely, the strip width automatically retries a couple
-of wider fallback values. A message is written to the FIJI log (`Window → Log`) naming
-the affected layer if a clean 8-way split still can't be found — this now reliably means
-a specific fissure doesn't fully cross that layer (too short, stops before reaching the
-boundary, or cuts across the fold at an angle instead of along it) rather than a
-numerical artifact, so it's worth checking that layer's fissures specifically.
+In a macro, existing files are overwritten without asking and no summary dialog is shown.
+Warnings still go to the Log window and the workbook.
 
 ---
 
 ## Troubleshooting
 
-### Build errors
+### Validation errors (the run stops)
 
-| Error | Cause | Fix |
-|---|---|---|
-| `JAVA_HOME is not defined correctly` | `JAVA_HOME` environment variable missing or wrong | Set `JAVA_HOME` to your JDK folder (not the `bin` subfolder). See [Setup](#setup--java-and-maven). |
-| `javac: command not found` | JRE installed instead of JDK, or JDK `bin` not on `PATH` | Install a JDK. The JRE does not include `javac`. |
-| `mvn: command not found` | Maven not on `PATH` | Add the Maven `bin` folder to your system `PATH`. |
-| Download errors during `mvn package` | No internet / Maven Central blocked | Pre-install the three jars with `mvn install:install-file`. |
-
-### ROI validation errors
-
-| Error message | Fix |
+| Message | Fix |
 |---|---|
-| *"The ROI Manager is empty"* | Add all required ROIs before running the plugin |
-| *"Missing the Cerebellum ROI"* | Name the closed polygon `Cerebellum`, `CB`, or anything containing "cerebellum" |
-| *"Missing the Granular+WM ROI"* | Name the closed polygon `GL+WM`, `GLWM`, `Granular+WM`, or anything containing "granular" |
-| *"Missing the White Matter ROI"* | Name the closed polygon `WM` or anything containing "white". Note: `GL+WM` is correctly identified as Granular+WM, not White Matter — add a separate `WM` ROI. Only required for instance 1 — a secondary instance (`2CB`, `3CB`, …) can omit it, see *Multiple instances* |
-| *"No fissure ROIs found"* | Add at least one fissure polyline named `FL1`, `fissure1`, or similar. Only required for instance 1 — a secondary instance (`2CB`, `3CB`, …) can omit it, see *Multiple instances* |
-| Subsections are labeled "Section 1", "Section 2", … instead of anatomical names | Expected whenever the fissure count isn't 7 — the anatomical names (2Cb, 3Cb, …) only apply to the standard scheme. Not an error |
-| *"Missing the Purkinje ROI"* | Name the open polyline `PL`, `Purkinje`, or anything containing "purkinje" |
-| *"The Purkinje ROI is a closed area"* | Re-trace as an open polyline using the *Segmented Line* tool |
-| *"More than one ROI matches Cerebellum"* | Two ROI names both match the Cerebellum rules for the *same* instance — rename or remove one, or add the correct instance-number prefix (see *Multiple instances*) if they actually belong to different instances |
-| *"[Instance N] Missing the ..."* | An instance-prefixed name (e.g. `2CB`) was found, but that instance is missing one of its other required ROIs — add it with the same `N` prefix, or remove the stray prefixed ROI if you didn't mean to create a second instance |
-| FIJI log shows *"~X% of the ... falls outside ..."* | Informational, not an error — see *Closing the loop* above. Only worth double-checking if the percentage is much larger than expected for a deliberate peduncle extension |
+| *The ROI Manager is empty* / *No ROIs with recognized names were found* | Add and name the ROIs as in [step 2](#2-trace-and-name-the-rois) |
+| *Missing the Cerebellum / Granular+WM / Purkinje ROI* | Add it, with a name from the table above |
+| *No fissure ROIs found* | Trace at least one fissure (`FL1`, …), or remove White Matter if the section shouldn't be split |
+| *… is a closed area, not a line* / *… is not a closed area* | Retrace the Purkinje line and fissures as lines, and the outlines as closed shapes |
+| *More than one ROI matches …* | Two names match the same layer. Rename or remove one, or add the right [piece prefix](#several-separately-traced-pieces). If one of them is `Granular Layer` from a run of version 1.0.0, delete it |
+| *[Instance N] Missing the …* | A name starting with the digit N created piece N. Add its other ROIs, or rename the stray ROI |
 
-### Measurement looks wrong
+### Warnings and notes (the run completes)
 
-| Symptom | Likely cause |
+| Message | Meaning |
 |---|---|
-| Per-partition areas don't add up to the whole | One fissure line doesn't reach all the way to both the pial surface and White Matter — retrace it so both ends land on (or very near) those boundaries |
-| A subsection has zero or near-zero area | Two adjacent fissures are nearly coincident — check for accidental duplicates |
-| FIJI log shows *"could not find a strip width that cleanly splits..."* | A specific fissure in the named layer doesn't fully cross it — check for one that's too short, cuts across the fold at an angle instead of along its length, or veers into a neighbouring fold |
-| FIJI log shows *"did not cleanly separate every lobule"*, naming specific labels | If the named label is the **first or last subsection** (2Cb/10Cb in the standard scheme, or "Section 1"/the highest-numbered section otherwise), see *Closing the loop* above — extend White Matter out to the Granular+WM and Cerebellum boundaries at the peduncle. For any other label, it's usually the fissure bounding that subsection not fully crossing the named layer |
-| Areas reported in px² instead of µm² | No pixel calibration set — run *Analyze → Set Scale* before measuring |
+| *The grey matter is a closed ring, so N fissure(s) split it into N section(s)…* | The first and last lobules are joined. See [Closing the loop](#closing-the-loop) |
+| *Found 8 sections, but the first and last lobules are still joined…* | As above. Generic names are used because 2Cb … 10Cb would be wrong |
+| *Could not split the grey matter cleanly into N sections…* | A fissure doesn't cross the whole grey matter. Check the white cut lines in the overlay for one that stops short or cuts across a fold instead of along it |
+| *The sections only cover X% of the grey matter area…* | Some grey matter wasn't assigned to any section. Check the section fills in the overlay |
+| *X% of the Purkinje line lies outside the grey matter…* | Part of the Purkinje trace runs outside Cerebellum − White Matter. It counts toward the total length but not toward any section |
+| *~X% of the Granular+WM (or White Matter) ROI's area falls outside…* | Informational. Expected at the peduncle; worth a look if it's large |
+| *Ignored N ROI(s) whose names don't match any expected layer…* | Lists ROIs the plugin didn't use. Check for typos |
+
+### Other
+
+| Symptom | Cause |
+|---|---|
+| Plugin missing from the menu | FIJI runs Java 8 (see [Installation](#installation)), or the jar isn't in `plugins/` |
+| Areas in pixel² instead of µm² | The image isn't calibrated. Use *Analyze ▸ Set Scale…* |
+| Sections labelled "Section 1, 2, …" | Expected whenever the result isn't exactly eight separated lobules. See [How many sections](#how-many-sections-you-get) |
+
+---
+
+## How it works
+
+```
+org.cerebellum.morphometry
+├── CerebellarMorphometryPlugin   FIJI entry point: options dialog, runs the pipeline, exports
+├── Diagnostics                   Collects notes/warnings (Log window, summary dialog, workbook)
+├── PluginOutput                  Tags ROIs/overlay items the plugin creates
+├── BuildInfo                     Plugin version, stamped at build time
+├── model/                        LayerSet, ConstructedLayers, PartitionSet, MorphometryResults,
+│                                 InstanceResult, RunInfo, ValidationException
+├── geometry/
+│   ├── ROIValidator              Name / type / instance checks → one LayerSet per piece
+│   ├── LayerConstructor          Grey, Granular, Molecular by Boolean subtraction
+│   ├── FissurePartitioner        Fissures → lobule regions that tile the grey matter
+│   ├── RasterSplitUtils          Pixel-mask splitting, labelling and partition completion
+│   ├── PartitionClipper          Per-lobule Granular / Molecular shapes
+│   ├── PurkinjeLengthCalculator  Calibrated length, clipped per lobule
+│   ├── BooleanROIProcessor       Defensive-copy ShapeRoi AND / NOT + calibrated area
+│   └── GeometryUtils             Vector and polyline helpers
+├── measurement/MeasurementEngine Orchestrates geometry and measurement; pools pieces
+├── export/                       SpreadsheetExporter (table, CSV, XLSX), XlsxWriter
+└── visualization/                OverlayRenderer, RoiManagerExporter
+```
+
+### Partitioning
+
+1. **Orient** each fissure from pial surface to white matter, by which endpoint is nested
+   more deeply (inside White Matter › Granular+WM › Cerebellum › outside).
+2. **Extend** each fissure along its own end directions until it runs from just outside the
+   Cerebellum into White Matter. The traced middle is kept exactly. Extension stops as soon
+   as its target is reached and is distance-capped, so a cut is never shot blindly across the
+   section.
+3. **Split the grey matter** (Cerebellum − White Matter) once. It's rasterized to a pixel
+   mask, thin strips around the cuts are subtracted, and the pieces are labelled as connected
+   components. A pixel mask is used because Java's vector `Area` geometry fragments
+   real-world tracings into dozens of spurious pieces. The number of pieces expected comes
+   from the mask's topology (ring or strip, see above). Strip widths are tried thinnest-first
+   until one gives that number.
+4. **Complete the partition.** The strip pixels are handed back to the nearest piece, which
+   puts every boundary on the fissure line itself. Slivers (under 1.5% of the grey matter)
+   are merged whole into their neighbour. The sections then tile the grey matter with no gaps.
+5. **Order and name** the pieces by where each piece's own stretch of the Purkinje line lies
+   (median position along the line). Standard names are applied only to eight properly
+   separated sections.
+6. **Measure.** Each section's Granular and Molecular areas are its footprint intersected with
+   the whole-cerebellum layers. Its Purkinje length comes from clipping the Purkinje line
+   against the footprint at sub-pixel resolution.
+
+---
+
+## Accuracy
+
+The test suite includes a synthetic section with closed-form answers: concentric layers with
+radial fissures, where every interior lobule is an exact annular sector. On it, every interior
+lobule's granular area, molecular area and Purkinje length is within **0.3%** of the exact
+value. The sections sum to the whole-layer totals within **0.1%**. This holds for a finely
+traced Purkinje line and for a coarse Segmented Line trace (≈ 73 px segments). Version 1.0.0
+measured the same lobules 4–7% low, and up to 20% low with the coarse trace (see the
+[changelog](CHANGELOG.md)).
+
+---
+
+## Building from source
+
+Needs a JDK 17 or newer (e.g. from <https://adoptium.net>). Maven doesn't need to be
+installed: the included wrapper downloads the right version on first use.
+
+```bash
+./mvnw verify
+```
+
+On Windows use `mvnw.cmd verify`. This compiles, runs the tests, and writes
+`target/cerebellar-layer-plugin-<version>.jar`.
+
+- Tests run headless and use a synthetic section (`src/test/java/.../testing/SyntheticSection.java`),
+  so no images or FIJI are needed.
+- CI builds and tests on Linux and Windows with Java 17 and 21 for every push and pull request.
+- To release, set `<version>` in `pom.xml`, update `CHANGELOG.md`, and push a tag `v<version>`.
+  The Release workflow builds the jar and publishes it on the Releases page. Built jars are
+  never committed to the repository.
+
+---
+
+## Upgrading from 1.0.0
+
+Version 1.1.0 corrects how per-lobule values are measured (see [CHANGELOG.md](CHANGELOG.md)).
+Per-lobule areas and Purkinje lengths are typically a few percent **higher** than 1.0.0
+reported, and now add up to the totals. Whole-cerebellum totals are unchanged. **Don't mix
+per-lobule numbers from 1.0.0 and 1.1.0 in one analysis.** Re-run the earlier sections
+instead; the ROI sets you saved can be reused as they are.
+
+Remove the old 23 MB `cerebellar-layer-plugin-1.0.0.jar` from `plugins/` when installing
+1.1.0.
+
+---
+
+## License
+
+[MIT](LICENSE). ImageJ is used under its own public-domain terms.

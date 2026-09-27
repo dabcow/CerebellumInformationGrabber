@@ -1,0 +1,17 @@
+# Build output — releases are published as GitHub Release assets, never committed
+target/
+*.jar
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+.factorypath
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,2 +1,16 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Scripts must keep their platform's line endings on every checkout.
+mvnw     text eol=lf
+*.sh     text eol=lf
+*.cmd    text eol=crlf
+*.bat    text eol=crlf
+
+# Binary files
+*.jar    binary
+*.zip    binary
+*.gz     binary
+*.png    binary
+*.tif    binary
+*.xlsx   binary
