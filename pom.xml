@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.cerebellum</groupId>
+    <artifactId>cerebellar-layer-plugin</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>Cerebellar Layer Quantification Plugin</name>
+    <description>
+        FIJI/ImageJ plugin for ROI-based quantitative morphometry of Nissl-stained
+        cerebellar histology sections (grey/granular/molecular layer areas, Purkinje
+        line length, and per-lobule breakdowns defined by user-traced fissure lines).
+    </description>
+
+    <!--
+        NOTE ON THIS POM:
+        We intentionally do NOT inherit from the org.scijava:pom-scijava parent BOM.
+        That parent is the "official" way to build SciJava-ecosystem components, but it
+        also pulls in an enforcer-plugin ruleset (bytecode-version checks, dependency
+        convergence rules, etc.) tuned for the SciJava project's own multi-module build,
+        which can produce confusing failures in a small standalone plugin. Depending
+        directly on net.imagej:ij, org.scijava:scijava-common and org.apache.poi:poi-ooxml
+        with pinned, verified versions is simpler, more predictable, and is itself a
+        completely standard way to build a FIJI plugin. If you would prefer the
+        pom-scijava parent (e.g. to fit into a multi-module SciJava build), see the
+        README for the swap.
+    -->
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.release>17</maven.compiler.release>
+        <ij.version>1.54p</ij.version>
+        <scijava-common.version>2.94.2</scijava-common.version>
+        <poi.version>5.5.1</poi.version>
+    </properties>
+
+    <dependencies>
+        <!-- Legacy ImageJ1 API: PolygonRoi, ShapeRoi, RoiManager, ResultsTable, Overlay, etc. -->
+        <dependency>
+            <groupId>net.imagej</groupId>
+            <artifactId>ij</artifactId>
+            <version>${ij.version}</version>
+        </dependency>
+
+        <!-- SciJava Command/@Plugin framework, for the ImageJ2-style entry point. -->
+        <dependency>
+            <groupId>org.scijava</groupId>
+            <artifactId>scijava-common</artifactId>
+            <version>${scijava-common.version}</version>
+        </dependency>
+
+        <!-- Apache POI, for native .xlsx export. -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>${poi.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>cerebellar-layer-plugin-${project.version}</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+            </plugin>
+
+            <!--
+                Builds a single runnable/droppable jar with all dependencies bundled,
+                so the .jar can be dropped straight into FIJI's plugins/ folder.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.3</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
