@@ -62,7 +62,9 @@ downloads since 2025 bundle Java 21. Older FIJI installs that still run Java 8 c
 the plugin. Check under *Help ▸ About ImageJ…*, and if needed download a current FIJI from
 <https://fiji.sc>.
 
-1. Download `cerebellar-layer-plugin-<version>.jar` from the
+1. Download **[`cerebellar-layer-plugin-1.1.0.jar`](cerebellar-layer-plugin-1.1.0.jar)** from
+   the top of this repository: open the file and click the download button (*Download raw
+   file*). Tagged versions are also attached to the
    [Releases page](https://github.com/dabcow/CerebellumInformationGrabber/releases).
 2. Copy it into FIJI's `plugins/` folder, and remove any older `cerebellar-layer-plugin-*.jar`.
 
@@ -423,9 +425,12 @@ On Windows use `mvnw.cmd verify`. This compiles, runs the tests, and writes
 - Tests run headless and use a synthetic section (`src/test/java/.../testing/SyntheticSection.java`),
   so no images or FIJI are needed.
 - CI builds and tests on Linux and Windows with Java 17 and 21 for every push and pull request.
-- To release, set `<version>` in `pom.xml`, update `CHANGELOG.md`, and push a tag `v<version>`.
-  The Release workflow builds the jar and publishes it on the Releases page. Built jars are
-  never committed to the repository.
+- **The jar in the repository root is the download users install**, so rebuild it whenever the
+  source changes. To release: set `<version>` in `pom.xml`, update `CHANGELOG.md`, run
+  `./mvnw verify`, and replace the jar in the repository root with the new
+  `target/cerebellar-layer-plugin-<version>.jar` (keep only one). CI fails if that jar is
+  missing or built from another version, and warns if it differs from a fresh build of the
+  source. Pushing a tag `v<version>` also publishes the jar on the Releases page.
 
 ---
 

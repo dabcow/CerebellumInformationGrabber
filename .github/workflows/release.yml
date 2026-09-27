@@ -1,7 +1,7 @@
 name: Release
 
 # Push a tag such as v1.1.0 (matching the version in pom.xml) to build the plugin jar and
-# publish it as a GitHub Release. The jar is attached to the release rather than committed.
+# publish it as a GitHub Release, alongside the copy committed in the repository root.
 on:
   push:
     tags: ['v*']

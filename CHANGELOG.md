@@ -100,7 +100,9 @@ per-lobule results from 1.0.0 and 1.1.0; re-run earlier sections instead.
   one `Integer` per pixel.
 - The source is committed as a normal Maven project. Before, it existed only inside a
   `.tar.gz` in the repository, next to a committed build of the jar, so no change could be
-  reviewed or diffed. Releases are now built by CI and published on GitHub Releases.
+  reviewed or diffed. The ~100 KB plugin jar is still committed at the repository root for
+  direct download; CI checks it matches the project version and warns if it differs from a
+  fresh build. Tagged versions are also published on GitHub Releases.
 - Maven Wrapper included. Maven no longer needs to be installed to build.
 - README rewritten to match the actual behaviour. Several sections contradicted the code:
   whether piece 1 needs White Matter, when standard names apply, the fill palette, and error
