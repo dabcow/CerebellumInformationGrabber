@@ -85,6 +85,9 @@ public final class FissurePartitioner {
             "2Cb", "3Cb", "4/5Cb", "6Cb", "7Cb", "8Cb", "9Cb", "10Cb"
     };
 
+    /** Number of sections that receive the standard lobule names. */
+    public static final int STANDARD_SECTION_COUNT = STANDARD_LOBULE_LABELS.length;
+
     /**
      * Candidate strip half-widths to try, each expressed as a fraction of the average cut
      * length. Tried thinnest-first; the first one that yields the expected number of pieces
@@ -249,14 +252,33 @@ public final class FissurePartitioner {
         boolean endsJoined = pieces.size() > 1 && samples.firstLabel >= 0 && samples.firstLabel == samples.lastLabel;
         int count = pieces.size();
         String[] labels;
-        if (count == STANDARD_LOBULE_LABELS.length && endsJoined) {
-            labels = genericLabels(count);
-            diag.warn("Found " + count + " sections, but the first and last lobules are still joined into one "
-                    + "(the grey matter is a closed ring), so the standard lobule names (2Cb … 10Cb) would be "
-                    + "wrong and generic \"Section N\" names are used instead. Extend White Matter out to the "
-                    + "Cerebellum outline at the peduncle to separate them (README: \"Closing the loop\").");
+        if (endsJoined) {
+            boolean standardWithheld = count == STANDARD_LOBULE_LABELS.length;
+            labels = standardWithheld ? genericLabels(count) : labelsForSubsectionCount(count);
+            diag.warn("The first and last lobules are joined into one section (they are still connected "
+                    + "around the base of the cerebellum), so one section is missing"
+                    + (standardWithheld ? " and the standard lobule names (2Cb … 10Cb) would be wrong, so generic "
+                            + "\"Section N\" names are used instead" : "")
+                    + ". Add a fissure line across the base of the cerebellum between the first and last "
+                    + "lobules, or extend White Matter out to the Cerebellum outline there "
+                    + "(README: \"Closing the loop\").");
         } else {
             labels = labelsForSubsectionCount(count);
+        }
+
+        // Sections are numbered from the Purkinje line's first traced point, so the direction it
+        // was traced in decides the numbering. The convention is clockwise (which runs from
+        // lobule 2 over the top to lobule 10 when rostral is on the left); a counterclockwise
+        // trace numbers everything in reverse, which is easy to miss in the table.
+        if (count > 1) {
+            double[] c = whiteMatterRoi.getContourCentroid();
+            double sweep = sweepDegrees(purkPoints, c[0], c[1]);
+            if (sweep < -COUNTERCLOCKWISE_THRESHOLD_DEG) {
+                diag.warn(String.format(Locale.ROOT, "The Purkinje line was traced counterclockwise (it turns %.0f° "
+                        + "counterclockwise around the white matter). Sections are numbered from the line's first "
+                        + "point, so they are numbered in reverse compared with a clockwise trace. If the labels "
+                        + "look reversed, retrace the Purkinje line clockwise.", -sweep));
+            }
         }
 
         List<PartitionSet.Partition> partitions = new ArrayList<>(count);
@@ -265,6 +287,32 @@ public final class FissurePartitioner {
             partitions.add(new PartitionSet.Partition(labels[i], p.shape, p.anchor));
         }
         return new PartitionSet(partitions, overlayLines, split.ring, endsJoined);
+    }
+
+    /** A net counterclockwise turn larger than this (degrees) triggers the direction warning. */
+    private static final double COUNTERCLOCKWISE_THRESHOLD_DEG = 90;
+
+    /**
+     * Net angle, in degrees, that the polyline turns around ({@code cx}, {@code cy}). Positive
+     * means clockwise as seen on screen (image y points down, so a clockwise path has increasing
+     * {@code atan2} angles). Folds in and out of lobules cancel out; only the overall direction
+     * around the white matter remains.
+     */
+    static double sweepDegrees(Point2D.Double[] pts, double cx, double cy) {
+        double total = 0;
+        double prev = Math.atan2(pts[0].y - cy, pts[0].x - cx);
+        for (int i = 1; i < pts.length; i++) {
+            double a = Math.atan2(pts[i].y - cy, pts[i].x - cx);
+            double d = a - prev;
+            if (d > Math.PI) {
+                d -= 2 * Math.PI;
+            } else if (d < -Math.PI) {
+                d += 2 * Math.PI;
+            }
+            total += d;
+            prev = a;
+        }
+        return Math.toDegrees(total);
     }
 
     // -----------------------------------------------------------------------
@@ -312,10 +360,8 @@ public final class FissurePartitioner {
         boolean ring = RasterSplitUtils.hasHole(baseMask, w, h);
         int expected = cuts.size() + (ring ? 0 : 1);
         if (ring) {
-            diag.note("The grey matter is a closed ring, so " + cuts.size() + " fissure(s) split it into "
-                    + expected + " section(s), and the first and last lobules stay joined as one section. "
-                    + "To separate them, extend White Matter out to the Cerebellum outline at the peduncle "
-                    + "(README: \"Closing the loop\").");
+            diag.note("The grey matter is a closed ring, so " + cuts.size() + " fissure line(s) split it into "
+                    + expected + " section(s).");
         } else {
             diag.note("The grey matter is an open ribbon (pinched at the peduncle), so " + cuts.size()
                     + " fissure(s) split it into " + expected + " section(s).");

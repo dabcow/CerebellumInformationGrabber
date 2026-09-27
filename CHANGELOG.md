@@ -27,9 +27,11 @@ per-lobule results from 1.0.0 and 1.1.0; re-run earlier sections instead.
   build could never find a neighbour, because distinct connected components are never
   adjacent. So every sliver was silently dropped with its area. Slivers are now merged whole
   into the lobule they border.
-- **Standard lobule names are withheld when they would be wrong.** A closed ring cut by eight
-  fissures gives eight sections, one of which is 2Cb and 10Cb fused. 1.0.0 still named them
-  2Cb … 10Cb. Generic names are now used, with a warning explaining how to separate the ends.
+- **Joined first and last lobules are reported, and never given standard names.** When the ring
+  of grey matter isn't closed at the base, one section holds both the first and last lobule.
+  1.0.0 only logged a note that could be misread. When that made eight sections, it still named
+  them 2Cb … 10Cb. This is now a warning that a section is missing, naming the fix (a fissure line
+  across the base, as in the lab SOP). Generic names are used in that case.
 - **Lobules are ordered by their own stretch of the Purkinje line** (median position) rather
   than by projecting each lobule's centroid onto it. A curved or branched lobule's centroid
   can sit nearer a neighbour's stretch of the line.
@@ -81,14 +83,27 @@ per-lobule results from 1.0.0 and 1.1.0; re-run earlier sections instead.
   or note if not.
 - Name labels for each section on the overlay, and a 12-colour palette (the README already
   promised 12; the code had 8).
-- *Output folder* field in the dialog, so a run can be fully scripted.
-- The dialog remembers its settings between runs.
+- *Output folder* field in the dialog, so a run can be fully scripted. It defaults to the folder
+  the image was opened from, so with one folder per section (as in the lab SOP) each section's
+  results are saved next to its `Montage.tif`.
+- The dialog remembers its checkbox settings between runs.
+- *File name* field (macro keyword `file_name`) for the result files.
+- Warning when the Purkinje line is traced counterclockwise. Sections are numbered from the
+  line's first point, so a counterclockwise trace numbers them in reverse (the SOP's "section
+  labels reversed" problem).
 - Asks before overwriting existing result files (interactive runs only).
 - Log note listing ROIs whose names weren't recognised.
-- Test suite (68 tests): name matching, a synthetic section with closed-form answers, and the
-  CSV/XLSX output, which is read back with Apache POI.
+- Test suite (106 tests): name matching, a synthetic section with closed-form answers, and the
+  CSV/XLSX output, which is read back with Apache POI. `SopScenariosTest` encodes the lab SOP's
+  workflow: every name in its naming table, its detached-pieces example (`CB` … `4CB`, `fl1`),
+  closing the ring with a fissure line across the base, clockwise and counterclockwise Purkinje
+  lines, XOR-trimmed outlines, one Purkinje segment per section, and micrometer calibration. On
+  these scenarios, 1.1.0 gives the same section counts and names as 1.0.0.
 
 ### Changed
+
+- **Result files are named `Output.csv` and `Output.xlsx`**, as in the lab SOP (section 11),
+  instead of after the image title (e.g. `Montage.csv`). The *File name* option changes this.
 
 - **The plugin jar is about 100 KB instead of 23 MB.** 1.0.0 bundled a full copy of ImageJ,
   SciJava (unused) and Apache POI, with commons-io, commons-compress, commons-codec, log4j and
@@ -100,7 +115,9 @@ per-lobule results from 1.0.0 and 1.1.0; re-run earlier sections instead.
   one `Integer` per pixel.
 - The source is committed as a normal Maven project. Before, it existed only inside a
   `.tar.gz` in the repository, next to a committed build of the jar, so no change could be
-  reviewed or diffed. Releases are now built by CI and published on GitHub Releases.
+  reviewed or diffed. The ~100 KB plugin jar is still committed at the repository root for
+  direct download; CI checks it matches the project version and warns if it differs from a
+  fresh build. Tagged versions are also published on GitHub Releases.
 - Maven Wrapper included. Maven no longer needs to be installed to build.
 - README rewritten to match the actual behaviour. Several sections contradicted the code:
   whether piece 1 needs White Matter, when standard names apply, the fill palette, and error

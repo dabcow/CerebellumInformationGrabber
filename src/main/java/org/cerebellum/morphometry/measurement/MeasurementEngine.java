@@ -153,7 +153,7 @@ public final class MeasurementEngine {
      *       the Purkinje line within each piece.</li>
      * </ul>
      */
-    public static MorphometryResults combine(List<InstanceResult> instances) {
+    public static MorphometryResults combine(List<InstanceResult> instances, Diagnostics diag) {
         if (instances.isEmpty()) {
             throw new IllegalArgumentException("combine() needs at least one instance");
         }
@@ -186,9 +186,13 @@ public final class MeasurementEngine {
             }
         }
 
-        String[] labels = anyEndsJoined
-                ? FissurePartitioner.genericLabels(pooled.size())
-                : FissurePartitioner.labelsForSubsectionCount(pooled.size());
+        String[] labels = FissurePartitioner.labelsForSubsectionCount(pooled.size());
+        if (anyEndsJoined && pooled.size() == FissurePartitioner.STANDARD_SECTION_COUNT) {
+            labels = FissurePartitioner.genericLabels(pooled.size());
+            diag.warn("The pieces pool into " + pooled.size() + " sections, but in at least one piece the first "
+                    + "and last lobules are joined into one section, so the standard lobule names would be wrong "
+                    + "and generic \"Section N\" names are used instead.");
+        }
         List<MorphometryResults.SubsectionResult> relabeled = new ArrayList<>(pooled.size());
         for (int i = 0; i < pooled.size(); i++) {
             MorphometryResults.SubsectionResult s = pooled.get(i);

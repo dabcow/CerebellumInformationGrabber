@@ -1,6 +1,7 @@
-# Build output — releases are published as GitHub Release assets, never committed
+# Build output. The only jar committed is the plugin download in the repository root.
 target/
 *.jar
+!/cerebellar-layer-plugin-*.jar
 
 # IDEs
 .idea/

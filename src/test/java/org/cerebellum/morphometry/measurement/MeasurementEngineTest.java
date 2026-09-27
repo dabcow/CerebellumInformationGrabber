@@ -44,7 +44,7 @@ class MeasurementEngineTest {
             SortedMap<Integer, LayerSet> instances = ROIValidator.validate(section.rois(), imp, diag);
             List<InstanceResult> all = MeasurementEngine.analyze(instances, imp, diag);
             this.instance = all.get(0);
-            this.results = MeasurementEngine.combine(all);
+            this.results = MeasurementEngine.combine(all, diag);
         }
 
         List<String> labels() {
@@ -182,7 +182,7 @@ class MeasurementEngineTest {
         Run run = new Run(SyntheticSection.builder().pinched(false).fissures(8).build());
         assertEquals(8, run.results.getSubsections().size());
         assertEquals("Section 1", run.labels().get(0));
-        assertTrue(run.diag.getWarnings().stream().anyMatch(w -> w.contains("first and last lobules are still joined")));
+        assertTrue(run.diag.getWarnings().stream().anyMatch(w -> w.contains("first and last lobules are joined")));
     }
 
     // -----------------------------------------------------------------------
@@ -202,7 +202,7 @@ class MeasurementEngineTest {
         Diagnostics diag = Diagnostics.silent();
         SortedMap<Integer, LayerSet> instances = ROIValidator.validate(rois.toArray(new Roi[0]), imp, diag);
         List<InstanceResult> all = MeasurementEngine.analyze(instances, imp, diag);
-        MorphometryResults pooled = MeasurementEngine.combine(all);
+        MorphometryResults pooled = MeasurementEngine.combine(all, diag);
 
         MorphometryResults one = all.get(0).getResults();
         MorphometryResults two = all.get(1).getResults();

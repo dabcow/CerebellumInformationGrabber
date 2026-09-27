@@ -34,6 +34,12 @@ jobs:
       - name: Build and test
         run: ./mvnw -B -ntp verify
 
+      # The jar in the repository root is what users download, so it must not drift from the
+      # source: fail if it's missing or from another version, warn if it differs from this build.
+      - name: Check the committed plugin jar
+        if: matrix.os == 'ubuntu-latest' && matrix.java == '21'
+        run: ./.github/check-committed-jar.sh
+
       - name: Upload plugin jar
         if: matrix.os == 'ubuntu-latest' && matrix.java == '21'
         uses: actions/upload-artifact@v7
