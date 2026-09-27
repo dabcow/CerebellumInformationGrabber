@@ -250,6 +250,21 @@ class SopScenariosTest {
     }
 
     // -----------------------------------------------------------------------
+    // SOP 11: output files are Output.csv and Output.xlsx
+    // -----------------------------------------------------------------------
+
+    @Test
+    void sop11_resultFilesAreNamedOutputByDefault() {
+        assertEquals("Output", CerebellarMorphometryPlugin.DEFAULT_FILE_NAME);
+        assertEquals("Output", CerebellarMorphometryPlugin.resultFileBase(null));
+        assertEquals("Output", CerebellarMorphometryPlugin.resultFileBase("   "));
+        assertEquals("Output", CerebellarMorphometryPlugin.resultFileBase("Output.csv"));
+        assertEquals("Mouse_001 Section_02", CerebellarMorphometryPlugin.resultFileBase(" Mouse_001 Section_02 "));
+        assertEquals("a_b_c", CerebellarMorphometryPlugin.resultFileBase("a/b:c"));
+        assertEquals("results", CerebellarMorphometryPlugin.resultFileBase("results.XLSX"));
+    }
+
+    // -----------------------------------------------------------------------
     // SOP "Image Conversion": the converter macro calibrates in micrometers
     // -----------------------------------------------------------------------
 

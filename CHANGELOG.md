@@ -87,12 +87,13 @@ per-lobule results from 1.0.0 and 1.1.0; re-run earlier sections instead.
   the image was opened from, so with one folder per section (as in the lab SOP) each section's
   results are saved next to its `Montage.tif`.
 - The dialog remembers its checkbox settings between runs.
+- *File name* field (macro keyword `file_name`) for the result files.
 - Warning when the Purkinje line is traced counterclockwise. Sections are numbered from the
   line's first point, so a counterclockwise trace numbers them in reverse (the SOP's "section
   labels reversed" problem).
 - Asks before overwriting existing result files (interactive runs only).
 - Log note listing ROIs whose names weren't recognised.
-- Test suite (105 tests): name matching, a synthetic section with closed-form answers, and the
+- Test suite (106 tests): name matching, a synthetic section with closed-form answers, and the
   CSV/XLSX output, which is read back with Apache POI. `SopScenariosTest` encodes the lab SOP's
   workflow: every name in its naming table, its detached-pieces example (`CB` … `4CB`, `fl1`),
   closing the ring with a fissure line across the base, clockwise and counterclockwise Purkinje
@@ -100,6 +101,9 @@ per-lobule results from 1.0.0 and 1.1.0; re-run earlier sections instead.
   these scenarios, 1.1.0 gives the same section counts and names as 1.0.0.
 
 ### Changed
+
+- **Result files are named `Output.csv` and `Output.xlsx`**, as in the lab SOP (section 11),
+  instead of after the image title (e.g. `Montage.csv`). The *File name* option changes this.
 
 - **The plugin jar is about 100 KB instead of 23 MB.** 1.0.0 bundled a full copy of ImageJ,
   SciJava (unused) and Apache POI, with commons-io, commons-compress, commons-codec, log4j and

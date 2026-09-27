@@ -48,9 +48,11 @@ import java.util.SortedMap;
  * <p>Every option has its own macro keyword, so a run can be recorded and replayed with
  * <em>Plugins &gt; Macros &gt; Record&hellip;</em>, e.g.</p>
  * <pre>
- * run("Quantify Layers...", "layer_overlay section_fills results_table save_csv save_excel output_folder=[/data/results]");
+ * run("Quantify Layers...", "layer_overlay section_fills results_table save_csv save_excel");
  * </pre>
- * <p>When run from a macro, existing result files are overwritten without asking and no summary
+ * <p>saves Output.csv and Output.xlsx next to each image. Add {@code file_name=[...]} and
+ * {@code output_folder=[...]} to collect several sections in one folder under distinct names.
+ * When run from a macro, existing result files are overwritten without asking and no summary
  * dialog is shown.</p>
  */
 public final class CerebellarMorphometryPlugin implements PlugIn {
@@ -184,10 +186,7 @@ public final class CerebellarMorphometryPlugin implements PlugIn {
             Prefs.set(PREFS + "folder", dir.getAbsolutePath());
         }
 
-        String base = imp.getShortTitle().replaceAll("[^A-Za-z0-9_\\-]", "_");
-        if (base.isEmpty()) {
-            base = "cerebellar_morphometry";
-        }
+        String base = resultFileBase(opt.fileName);
         File csv = new File(dir, base + ".csv");
         File xlsx = new File(dir, base + ".xlsx");
 
@@ -226,6 +225,22 @@ public final class CerebellarMorphometryPlugin implements PlugIn {
         }
     }
 
+    /** Default name of the result files, as in the lab SOP: Output.csv and Output.xlsx. */
+    static final String DEFAULT_FILE_NAME = "Output";
+
+    /**
+     * The base name for the result files, from what was typed in the dialog: a trailing
+     * {@code .csv}/{@code .xlsx} is dropped, characters not allowed in file names are replaced
+     * with {@code _}, and an empty name falls back to {@link #DEFAULT_FILE_NAME}.
+     */
+    static String resultFileBase(String requested) {
+        String base = requested == null ? "" : requested.trim();
+        base = base.replaceAll("(?i)\\.(csv|xlsx)$", "");
+        base = base.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_");
+        base = base.replaceAll("^[.\\s]+|[.\\s]+$", ""); // Windows rejects leading/trailing dots and spaces
+        return base.isEmpty() ? DEFAULT_FILE_NAME : base;
+    }
+
     private static void logStackTrace(Throwable t) {
         IJ.log(Diagnostics.LOG_PREFIX + t);
         for (StackTraceElement el : t.getStackTrace()) {
@@ -246,6 +261,7 @@ public final class CerebellarMorphometryPlugin implements PlugIn {
         boolean resultsTable;
         boolean saveCsv;
         boolean saveXlsx;
+        String fileName;
         String outputFolder;
 
         static Options ask(ImagePlus imp) {
@@ -258,9 +274,10 @@ public final class CerebellarMorphometryPlugin implements PlugIn {
             gd.addMessage("Save results");
             gd.addCheckbox("Save_CSV", Prefs.get(PREFS + "csv", true));
             gd.addCheckbox("Save_Excel workbook (.xlsx)", Prefs.get(PREFS + "xlsx", true));
+            gd.addStringField("File_name", DEFAULT_FILE_NAME, 20);
             gd.addDirectoryField("Output_folder", defaultFolder(imp), 30);
-            gd.addMessage("Files are named after the image and saved next to it unless you pick\n"
-                    + "another folder. Leave the folder empty to be asked.");
+            gd.addMessage("Saved as <file name>.csv and <file name>.xlsx next to the image unless you\n"
+                    + "pick another folder. Leave the folder empty to be asked.");
             gd.addHelp("https://github.com/dabcow/CerebellumInformationGrabber#readme");
             gd.showDialog();
             if (gd.wasCanceled()) {
@@ -274,6 +291,7 @@ public final class CerebellarMorphometryPlugin implements PlugIn {
             o.resultsTable = gd.getNextBoolean();
             o.saveCsv      = gd.getNextBoolean();
             o.saveXlsx     = gd.getNextBoolean();
+            o.fileName     = gd.getNextString();
             o.outputFolder = gd.getNextString().trim();
 
             if (Macro.getOptions() == null) { // remember interactive choices, not macro ones
@@ -294,7 +312,7 @@ public final class CerebellarMorphometryPlugin implements PlugIn {
          * The folder the image was opened from, so each section's results land next to its image
          * (one folder per section, all images named alike, e.g. Montage.tif). Deliberately not the
          * last folder used: with identically named images, that would put the next section's
-         * Montage.csv on top of the previous section's. Falls back to the last folder used only
+         * Output.csv on top of the previous section's. Falls back to the last folder used only
          * for an image that has never been saved.
          */
         private static String defaultFolder(ImagePlus imp) {

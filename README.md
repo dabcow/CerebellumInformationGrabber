@@ -184,8 +184,9 @@ Morphometry ▸ Quantify Layers…**. The dialog remembers the checkbox choices 
 | Section fills and labels | Gives each section its own translucent colour and a name label on the image | `section_fills` |
 | Add ROIs to ROI Manager | Adds one ROI per measured region ([details](#measurement-rois)) | `add_rois` |
 | Results table | Shows the results in an ImageJ Results Table | `results_table` |
-| Save CSV | Saves `<image name>.csv` | `save_csv` |
-| Save Excel workbook (.xlsx) | Saves `<image name>.xlsx`, with a "Run Info" sheet | `save_excel` |
+| Save CSV | Saves `Output.csv` | `save_csv` |
+| Save Excel workbook (.xlsx) | Saves `Output.xlsx`, with a "Run Info" sheet | `save_excel` |
+| File name | Name of the result files, `Output` by default. Change it to save several sections into one folder | `file_name` |
 | Output folder | Where files are saved. Defaults to the folder the image was opened from, so each section's results sit next to its image. Leave empty to be asked | `output_folder` |
 
 If warnings come up during the run, a summary dialog lists them at the end. The details are
@@ -310,11 +311,16 @@ Every dialog option has its own macro keyword (see [the options table](#3-run-th
 a run can be recorded with *Plugins ▸ Macros ▸ Record…* and replayed:
 
 ```javascript
-// For each open image whose ROIs are in the ROI Manager:
-run("Quantify Layers...", "layer_overlay section_fills results_table save_csv save_excel output_folder=[C:/data/results]");
+// For each open image whose ROIs are in the ROI Manager.
+// Saves Output.csv and Output.xlsx next to the image, as in the lab SOP:
+run("Quantify Layers...", "layer_overlay section_fills results_table save_csv save_excel");
+
+// Or collect every section in one folder, each under its own name:
+run("Quantify Layers...", "results_table save_csv save_excel file_name=[Mouse_001_Section_02] output_folder=[C:/data/results]");
 ```
 
-In a macro, existing files are overwritten without asking and no summary dialog is shown.
+In a macro, existing files are overwritten without asking, so give each section its own
+`file_name` when they share an `output_folder`. No summary dialog is shown.
 Warnings still go to the Log window and the workbook.
 
 ---
@@ -451,6 +457,9 @@ Per-lobule areas and Purkinje lengths are typically a few percent **higher** tha
 reported, and now add up to the totals. Whole-cerebellum totals are unchanged. **Don't mix
 per-lobule numbers from 1.0.0 and 1.1.0 in one analysis.** Re-run the earlier sections
 instead; the ROI sets you saved can be reused as they are.
+
+Result files are now named `Output.csv` and `Output.xlsx` (as in the lab SOP) instead of after
+the image (e.g. `Montage.csv`). Use the *File name* option for other names.
 
 Remove the old 23 MB `cerebellar-layer-plugin-1.0.0.jar` from `plugins/` when installing
 1.1.0.
