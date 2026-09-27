@@ -3,73 +3,85 @@ package org.cerebellum.morphometry.model;
 import ij.gui.PolygonRoi;
 import ij.gui.ShapeRoi;
 
+import java.awt.geom.Point2D;
 import java.util.Collections;
 import java.util.List;
 
 /**
- * Output of {@link org.cerebellum.morphometry.geometry.FissurePartitioner}: the cerebellum
- * cut into {@code N+1} lobule-sized subsections by the {@code N} traced fissure lines (7
- * fissures &rarr; 8 subsections in the standard scheme, but any count is supported), plus
- * the extended cutting lines themselves so {@link org.cerebellum.morphometry.visualization.OverlayRenderer}
- * can draw the partition boundaries.
+ * Output of {@link org.cerebellum.morphometry.geometry.FissurePartitioner}: the grey matter cut
+ * into lobule-sized subsections by the traced fissure lines, plus the (extended) cutting lines
+ * themselves so {@link org.cerebellum.morphometry.visualization.OverlayRenderer} can draw the
+ * partition boundaries.
+ *
+ * <p>The subsections tile the grey matter: every grey-matter pixel belongs to exactly one of
+ * them, so per-subsection areas add up to the whole-cerebellum totals.</p>
  */
 public final class PartitionSet {
 
-    /** One fissure-bounded subsection (e.g. "2Cb", or "Section 3" for a non-standard fissure count). */
+    /** One fissure-bounded subsection (e.g. "2Cb", or "Section 3" for a non-standard count). */
     public static final class Partition {
         private final String label;
         private final ShapeRoi region;
-        /**
-         * Arc-length position of this partition's two ends along the Purkinje polyline, in
-         * uncalibrated pixel-space units (consistent with how {@link org.cerebellum.morphometry.geometry.GeometryUtils}
-         * measures everything). Convert to physical length via
-         * {@link org.cerebellum.morphometry.geometry.PurkinjeLengthCalculator#lengthBetween}.
-         */
-        private final double purkinjeArcStart;
-        private final double purkinjeArcEnd;
+        private final Point2D.Double labelAnchor;
 
-        public Partition(String label, ShapeRoi region, double purkinjeArcStart, double purkinjeArcEnd) {
+        public Partition(String label, ShapeRoi region, Point2D.Double labelAnchor) {
             this.label = label;
             this.region = region;
-            this.purkinjeArcStart = purkinjeArcStart;
-            this.purkinjeArcEnd = purkinjeArcEnd;
+            this.labelAnchor = labelAnchor;
         }
 
         public String getLabel() {
             return label;
         }
 
+        /** This subsection's footprint within the grey matter, in image coordinates. */
         public ShapeRoi getRegion() {
             return region;
         }
 
-        public double getPurkinjeArcStart() {
-            return purkinjeArcStart;
-        }
-
-        public double getPurkinjeArcEnd() {
-            return purkinjeArcEnd;
-        }
-
-        public double getPixelArcLength() {
-            return purkinjeArcEnd - purkinjeArcStart;
+        /** A point guaranteed to lie inside {@link #getRegion()}, for placing a text label. */
+        public Point2D.Double getLabelAnchor() {
+            return labelAnchor;
         }
     }
 
-    private final List<Partition> partitions; // one per resolved lobule, in anatomical/arc order
-    private final List<PolygonRoi> extendedCutLines; // size 7, for overlay only
+    private static final PartitionSet EMPTY =
+            new PartitionSet(Collections.emptyList(), Collections.emptyList(), false, false);
 
-    public PartitionSet(List<Partition> partitions, List<PolygonRoi> extendedCutLines) {
+    private final List<Partition> partitions;
+    private final List<PolygonRoi> cutLines;
+    private final boolean ring;
+    private final boolean endsJoined;
+
+    public PartitionSet(List<Partition> partitions, List<PolygonRoi> cutLines, boolean ring, boolean endsJoined) {
         this.partitions = Collections.unmodifiableList(partitions);
-        this.extendedCutLines = Collections.unmodifiableList(extendedCutLines);
+        this.cutLines = Collections.unmodifiableList(cutLines);
+        this.ring = ring;
+        this.endsJoined = endsJoined;
     }
 
+    /** No subsections and no cut lines: used for an instance that isn't partitioned at all. */
+    public static PartitionSet empty() {
+        return EMPTY;
+    }
+
+    /** One per resolved subsection, in anatomical (Purkinje-line) order. */
     public List<Partition> getPartitions() {
         return partitions;
     }
 
-    /** The seven extended fissure cutting curves (pial surface through the white matter and out the far side). */
-    public List<PolygonRoi> getExtendedCutLines() {
-        return extendedCutLines;
+    /** Each fissure's spanning cut (the traced line, extended to cross the whole grey matter). */
+    public List<PolygonRoi> getCutLines() {
+        return cutLines;
+    }
+
+    /** True if the grey matter was a closed ring (not pinched open at the peduncle). */
+    public boolean isRing() {
+        return ring;
+    }
+
+    /** True if the first and last lobules ended up in the same subsection. */
+    public boolean areEndsJoined() {
+        return endsJoined;
     }
 }

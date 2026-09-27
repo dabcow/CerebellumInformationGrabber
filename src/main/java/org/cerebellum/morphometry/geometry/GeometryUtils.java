@@ -1,8 +1,9 @@
 package org.cerebellum.morphometry.geometry;
 
 import ij.gui.Roi;
+import ij.process.FloatPolygon;
 
-import java.awt.*;
+import java.awt.Rectangle;
 import java.awt.geom.Point2D;
 
 /**
@@ -18,7 +19,7 @@ public final class GeometryUtils {
 
     /** Extracts a Roi's vertices (works for polygons, polylines, and simple shapes alike). */
     public static Point2D.Double[] extractPoints(Roi roi) {
-        var fp = roi.getFloatPolygon();
+        FloatPolygon fp = roi.getFloatPolygon();
         Point2D.Double[] pts = new Point2D.Double[fp.npoints];
         for (int i = 0; i < fp.npoints; i++) {
             pts[i] = new Point2D.Double(fp.xpoints[i], fp.ypoints[i]);
@@ -134,42 +135,11 @@ public final class GeometryUtils {
         return best;
     }
 
-    /** Polygon area via the shoelace formula (vertices in absolute pixel coordinates, implicitly closed). */
-    public static double polygonArea(Point2D.Double[] pts) {
-        int n = pts.length;
-        if (n < 3) {
-            return 0.0;
-        }
-        double area = 0.0;
-        for (int i = 0; i < n; i++) {
-            Point2D.Double a = pts[i];
-            Point2D.Double b = pts[(i + 1) % n];
-            area += a.x * b.y - b.x * a.y;
-        }
-        return Math.abs(area) / 2.0;
-    }
-
-    /** Arithmetic centroid of a Roi's polygon vertices (sufficient for direction-finding). */
-    public static Point2D.Double centroid(Roi roi) {
-        var fp = roi.getFloatPolygon();
-        if (fp.npoints == 0) {
-            return new Point2D.Double(0, 0);
-        }
-        double cx = 0, cy = 0;
-        for (int i = 0; i < fp.npoints; i++) {
-            cx += fp.xpoints[i];
-            cy += fp.ypoints[i];
-        }
-        return new Point2D.Double(cx / fp.npoints, cy / fp.npoints);
-    }
-
     /**
      * Builds a closed polygon strip of the given {@code halfWidth} around a polyline.
      * <p>Uses per-vertex perpendicular offsets (averaged at interior vertices) so the strip
-     * correctly follows bends in a multi-segment line. The result can be passed directly to
-     * {@code PolygonRoi(float[], float[], int, int)} for use in {@link ij.gui.ShapeRoi}
-     * Boolean operations, which ensures the coordinates stay in the same absolute-pixel
-     * system that all other ROIs use.</p>
+     * correctly follows bends in a multi-segment line. The result is in the same absolute-pixel
+     * coordinates as the input, ready to wrap in a {@code PolygonRoi}.</p>
      *
      * @param pts       polyline vertices in absolute pixel coordinates
      * @param halfWidth half the desired strip width in pixels

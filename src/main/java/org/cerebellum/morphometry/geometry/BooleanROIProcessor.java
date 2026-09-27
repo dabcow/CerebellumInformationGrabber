@@ -3,13 +3,16 @@ package org.cerebellum.morphometry.geometry;
 import ij.ImagePlus;
 import ij.gui.Roi;
 import ij.gui.ShapeRoi;
+import ij.measure.Measurements;
+import ij.plugin.filter.ThresholdToSelection;
 import ij.process.ImageProcessor;
 import ij.process.ImageStatistics;
 
-import java.awt.*;
+import java.awt.Polygon;
+import java.awt.Rectangle;
 
 /**
- * Thin wrapper around {@link ShapeRoi}'s Boolean operations (AND / OR / NOT) and around
+ * Thin wrapper around {@link ShapeRoi}'s Boolean operations (AND / NOT) and around
  * calibrated area measurement.
  *
  * <p><b>Why this class exists, beyond convenience:</b> {@code ShapeRoi.and/or/not/xor}
@@ -37,14 +40,42 @@ public final class BooleanROIProcessor {
         return copy(a).and(copy(b));
     }
 
-    /** Union: everything in a or b. */
-    public static ShapeRoi or(Roi a, Roi b) {
-        return copy(a).or(copy(b));
-    }
-
     /** Difference: everything in a that is not in b. */
     public static ShapeRoi subtract(Roi a, Roi b) {
         return copy(a).not(copy(b));
+    }
+
+    /**
+     * Re-traces an area ROI from its pixel mask into a clean outline covering exactly the same
+     * pixels (so its measured area is unchanged).
+     *
+     * <p>Shapes produced by the Boolean operations above can be split by Java2D into many
+     * horizontal slabs (see {@link RasterSplitUtils}). That doesn't affect their measured area, but
+     * when such a shape is drawn, every slab edge is stroked, which shows up as spurious horizontal
+     * lines across the layer. Use this for anything a user will look at. Returns {@code null} for
+     * an empty shape.</p>
+     */
+    public static Roi cleanOutline(Roi roi) {
+        if (roi == null || !roi.isArea()) {
+            return roi;
+        }
+        Rectangle bounds = roi.getBounds();
+        if (bounds.width <= 0 || bounds.height <= 0) {
+            return null;
+        }
+        ImageProcessor mask = roi.getMask();
+        if (mask == null) {
+            return roi; // a plain rectangle is already a single clean outline
+        }
+        mask = mask.duplicate();
+        mask.setThreshold(255, 255, ImageProcessor.NO_LUT_UPDATE);
+        Roi traced = new ThresholdToSelection().convert(mask);
+        if (traced == null) {
+            return null;
+        }
+        Rectangle tb = traced.getBounds();
+        traced.setLocation(tb.x + bounds.x, tb.y + bounds.y);
+        return traced;
     }
 
     /**
@@ -63,18 +94,10 @@ public final class BooleanROIProcessor {
         }
         ImageProcessor ip = imp.getProcessor();
         ip.setRoi(roi);
-        ImageStatistics stats = ImageStatistics.getStatistics(ip, ij.measure.Measurements.AREA, imp.getCalibration());
-        ip.resetRoi();
-        return stats.area;
-    }
-
-    /**
-     * True if a Roi covers no measurable area (used for containment checks such as
-     * "is everything in A also in B", which holds iff {@code A NOT B} is empty).
-     */
-    public static boolean isEffectivelyEmpty(Roi roi, ImagePlus imp, double toleranceFraction, double referenceArea) {
-        double a = area(roi, imp);
-        double tolerance = Math.max(referenceArea * toleranceFraction, 1e-9);
-        return a <= tolerance;
+        try {
+            return ImageStatistics.getStatistics(ip, Measurements.AREA, imp.getCalibration()).area;
+        } finally {
+            ip.resetRoi();
+        }
     }
 }

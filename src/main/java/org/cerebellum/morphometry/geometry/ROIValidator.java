@@ -1,25 +1,28 @@
 package org.cerebellum.morphometry.geometry;
 
-import ij.IJ;
 import ij.ImagePlus;
+import ij.gui.Line;
 import ij.gui.PolygonRoi;
 import ij.gui.Roi;
 import ij.plugin.frame.RoiManager;
+import org.cerebellum.morphometry.Diagnostics;
+import org.cerebellum.morphometry.PluginOutput;
 import org.cerebellum.morphometry.model.LayerSet;
 import org.cerebellum.morphometry.model.ValidationException;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.SortedMap;
 import java.util.TreeMap;
 
 /**
- * Checks that the RoiManager contains exactly what the plugin needs and turns the ROIs
- * into one {@link LayerSet} per detected <b>instance</b>. Every problem found is collected
- * and reported together.
+ * Checks that the ROI Manager contains what the plugin needs and turns the ROIs into one
+ * {@link LayerSet} per detected <b>instance</b>. Every problem found is collected and reported
+ * together, so the user can fix everything in one pass.
  *
- * <h2>ROI naming — full names and abbreviations</h2>
+ * <h2>ROI naming &mdash; full names and abbreviations</h2>
  * Matching is case-insensitive. Both long-form names and common lab abbreviations are
  * recognised. Abbreviations are matched as <em>whole tokens</em> (surrounded by
  * non-alphanumeric characters or at the start/end of the name) so that, for example,
@@ -27,6 +30,7 @@ import java.util.TreeMap;
  * contain "cb".
  *
  * <table border="1">
+ *   <caption>Accepted ROI names</caption>
  *   <tr><th>ROI</th><th>Accepted names (examples)</th></tr>
  *   <tr><td>Cerebellum</td>
  *       <td>cerebellum, Cerebellum, <b>CB</b>, cb</td></tr>
@@ -38,7 +42,7 @@ import java.util.TreeMap;
  *   <tr><td>Purkinje line</td>
  *       <td>purkinje, Purkinje, <b>PL</b>, pl</td></tr>
  *   <tr><td>Fissure lines (&ge;1)</td>
- *       <td>fissure1, fissure2, …, Fissure_1, <b>FL1, FL2, …</b>, fl1, fl2, …, FL_1, FL-2, FL</td></tr>
+ *       <td>fissure1, fissure2, &hellip;, Fissure_1, <b>FL1, FL2, &hellip;</b>, fl1, FL_1, FL-2, FL</td></tr>
  * </table>
  *
  * <p><b>Disambiguation priority</b> (important for abbreviations that could match more
@@ -46,45 +50,38 @@ import java.util.TreeMap;
  * In particular, Granular+WM is tested before White Matter, so a ROI named "GL+WM" is
  * correctly identified as Granular+WM even though it also contains the "wm" token.</p>
  *
- * <h2>Multiple instances (separately-traced sections)</h2>
- * <p>Sometimes the tissue itself isn't one traceable outline — a piece may have broken
- * off during sectioning, or the cut may capture disconnected islands of cerebellar
- * tissue. Rather than force those into one Cerebellum/Granular+WM hierarchy that doesn't
- * geometrically make sense, each disconnected piece can be traced as its own complete,
- * independent <b>instance</b>: its own Cerebellum, Granular+WM, White Matter, Purkinje
- * line, and fissures, all measured separately and reported as additional rows in the
- * same final table.</p>
+ * <p>ROIs this plugin added itself (its measurement ROIs, see {@link PluginOutput}) are never
+ * treated as input, so the plugin can be re-run on the same ROI Manager.</p>
  *
- * <p>An instance is identified by a leading number on every ROI name belonging to it —
- * e.g. {@code "2CB"} and {@code "3GL+WM"} are the Cerebellum for instance 2 and the
- * Granular+WM for instance 3. ROI names with <em>no</em> leading number belong to
- * instance 1 (so existing single-section workflows need no changes at all). A fissure's
- * own index keeps working the same way after the instance prefix: {@code "2FL1"} is
- * instance 2's first fissure. There's no upper limit on how many instances can be
- * present at once — each one just needs the three required ROIs (Cerebellum, Granular+WM,
- * Purkinje) under that same leading number; White Matter and fissures are optional (see below).</p>
+ * <h2>Line ROIs</h2>
+ * <p>The Purkinje line and fissures may be traced with the Segmented Line, Freehand Line or
+ * straight Line tool. A straight line is converted to a two-point polyline.</p>
  *
- * <p><b>Naming caution:</b> because a leading number is now meaningful, avoid using bare
- * names like "2Cb" or "10Cb" for anything other than this instance-prefix feature —
- * previously such names were deliberately ignored (to avoid confusion with lobule output
- * labels), but they now mean "the Cerebellum ROI for instance 2/10". Output ROIs added by
- * {@link org.cerebellum.morphometry.visualization.RoiManagerExporter} are safe regardless,
- * since they always carry a suffix (e.g. "2Cb_Granular") that this parser doesn't match.</p>
+ * <h2>Multiple instances (separately-traced pieces)</h2>
+ * <p>When the tissue can't be traced as one outline (a piece broke off, or the cut captured
+ * disconnected islands), each piece can be traced as its own <b>instance</b>, identified by a
+ * leading number on every ROI name belonging to it &mdash; e.g. {@code "2CB"} and
+ * {@code "3GL+WM"}. Names with no leading number belong to instance 1, so single-section
+ * workflows need no changes. A fissure's own index follows the instance prefix: {@code "2FL1"} is
+ * instance 2's first fissure. Every instance needs its own Cerebellum, Granular+WM and Purkinje
+ * ROIs; instances are measured separately and then pooled into one set of results (see {@link
+ * org.cerebellum.morphometry.measurement.MeasurementEngine#combine}).</p>
+ *
+ * <p><b>Naming caution:</b> because a leading number is meaningful, avoid names like "2Cb" or
+ * "10Cb" for anything other than this instance-prefix feature &mdash; they mean "the Cerebellum
+ * ROI for instance 2/10". Leading numbers longer than {@value #MAX_INSTANCE_DIGITS} digits (e.g.
+ * a date) are not treated as instance numbers.</p>
  *
  * <h2>White Matter and fissures are optional</h2>
- * <p>Only three ROIs are ever required for an instance: Cerebellum, Granular+WM, and the
- * Purkinje line. White Matter and fissures are optional for <em>every</em> instance:</p>
  * <ul>
- *   <li><b>No White Matter traced?</b> Fine — some scan sections contain no white-matter core
- *       at all (e.g. a peripheral cut through cortex only). That instance's Grey Matter and
- *       Granular Layer numbers simply won't have White Matter excluded (there's nothing to
- *       subtract), and it isn't split into subsections. Any fissures traced anyway are ignored
- *       (with a log note), since a section with no white matter isn't partitioned into lobules.</li>
+ *   <li><b>No White Matter traced?</b> Fine &mdash; some sections contain no white-matter core
+ *       (e.g. a peripheral cut through cortex only). That instance's Grey Matter and Granular
+ *       Layer numbers simply won't have White Matter excluded, and it isn't split into
+ *       subsections. Any fissures traced anyway are ignored (with a note).</li>
  *   <li><b>No fissures traced (but White Matter present)?</b> That instance just isn't split
- *       into subsections — its whole-cerebellum totals are still measured normally. Required for
- *       a primary instance that has White Matter; optional for any secondary instance, which may
- *       be traced only for its overall extent.</li>
- *   <li><b>Both traced?</b> Full behaviour — layer breakdown and lobule partitioning happen.</li>
+ *       into subsections. Required for instance 1 when it has White Matter; optional for any
+ *       other instance, which may be traced only for its overall extent.</li>
+ *   <li><b>Both traced?</b> Full behaviour &mdash; layer breakdown and lobule partitioning.</li>
  * </ul>
  */
 public final class ROIValidator {
@@ -92,11 +89,17 @@ public final class ROIValidator {
     /** How far a containment check may be off, as a fraction of area. */
     private static final double CONTAINMENT_TOLERANCE_FRACTION = 0.005; // 0.5 %
 
+    /** Longer leading digit runs (dates, sample IDs) are not instance numbers. */
+    static final int MAX_INSTANCE_DIGITS = 4;
+
+    /** At most this many ignored ROI names are listed in the "ignored" note. */
+    private static final int MAX_IGNORED_NAMES_LISTED = 10;
+
     private ROIValidator() {
     }
 
     // -----------------------------------------------------------------------
-    // Public entry point
+    // Public entry points
     // -----------------------------------------------------------------------
 
     /**
@@ -104,25 +107,24 @@ public final class ROIValidator {
      * instance, keyed by instance number and sorted in ascending order. In the common case
      * (no instance-prefixed names present) this map has a single entry under key 1.
      */
-    public static SortedMap<Integer, LayerSet> validate(RoiManager rm, ImagePlus imp) throws ValidationException {
+    public static SortedMap<Integer, LayerSet> validate(RoiManager rm, ImagePlus imp, Diagnostics diag)
+            throws ValidationException {
         if (rm == null || rm.getCount() == 0) {
-            List<String> problems = new ArrayList<>();
-            problems.add("The ROI Manager is empty. Add the Cerebellum (or CB), Granular+WM (or GL+WM), "
-                    + "and Purkinje line (or PL) before running this plugin. White Matter (or WM) and "
-                    + "Fissure lines (FL1, FL2, …) are optional — trace them to exclude white matter and "
-                    + "to split the section into lobules.");
-            throw new ValidationException(problems);
+            throw new ValidationException(List.of(
+                    "The ROI Manager is empty. Add the Cerebellum (or CB), Granular+WM (or GL+WM), and "
+                    + "Purkinje line (or PL) before running this plugin. White Matter (or WM) and Fissure "
+                    + "lines (FL1, FL2, …) are optional — trace them to exclude white matter and to split "
+                    + "the section into lobules."));
         }
-        return validate(rm.getRoisAsArray(), imp);
+        return validate(rm.getRoisAsArray(), imp, diag);
     }
 
     /**
-     * Core validation logic, operating on a plain ROI array rather than a live {@link
-     * RoiManager} — the public {@link #validate(RoiManager, ImagePlus)} entry point just
-     * unwraps the manager (after checking it isn't null/empty) and delegates here. Exists
-     * as its own method mainly so it can be exercised directly.
+     * Core validation logic, operating on a plain ROI array rather than a live {@link RoiManager}
+     * (which cannot exist in a headless test).
      */
-    public static SortedMap<Integer, LayerSet> validate(Roi[] rois, ImagePlus imp) throws ValidationException {
+    public static SortedMap<Integer, LayerSet> validate(Roi[] rois, ImagePlus imp, Diagnostics diag)
+            throws ValidationException {
         List<String> problems = new ArrayList<>();
 
         if (imp == null) {
@@ -132,16 +134,24 @@ public final class ROIValidator {
 
         // -------------------------------------------------------------------
         // Group ROIs by instance number, classifying each by name (with its
-        // leading-number instance prefix stripped first). Unrecognized names
-        // are silently ignored, same as before.
+        // leading-number instance prefix stripped first).
         // -------------------------------------------------------------------
         SortedMap<Integer, InstanceBucket> buckets = new TreeMap<>();
+        List<String> ignored = new ArrayList<>();
+        int skippedOutputs = 0;
         for (Roi roi : rois) {
-            String name  = roi.getName() == null ? "" : roi.getName();
-            String lower = name.toLowerCase();
-            Classification c = classify(lower);
+            if (roi == null) {
+                continue;
+            }
+            if (PluginOutput.isOutput(roi)) {
+                skippedOutputs++;
+                continue;
+            }
+            String name = roi.getName() == null ? "" : roi.getName();
+            Classification c = classify(name.toLowerCase(Locale.ROOT));
             if (c == null) {
-                continue; // unrecognized ROI name — ignored, as before
+                ignored.add(name.isEmpty() ? "(unnamed)" : name);
+                continue;
             }
             InstanceBucket bucket = buckets.computeIfAbsent(c.instance, k -> new InstanceBucket());
             switch (c.category) {
@@ -149,30 +159,29 @@ public final class ROIValidator {
                     bucket.fissures.add(roi);
                     break;
                 case PURKINJE:
-                    if (bucket.purkinje != null) {
-                        bucket.duplicates.add("Purkinje (\"" + bucket.purkinje.getName() + "\" and \"" + name + "\")");
-                    }
-                    bucket.purkinje = roi;
+                    bucket.purkinje = assign(bucket.purkinje, roi, "Purkinje", bucket.duplicates);
                     break;
                 case GRANULAR_WM:
-                    if (bucket.granularWM != null) {
-                        bucket.duplicates.add("Granular+WM (\"" + bucket.granularWM.getName() + "\" and \"" + name + "\")");
-                    }
-                    bucket.granularWM = roi;
+                    bucket.granularWM = assign(bucket.granularWM, roi, "Granular+WM", bucket.duplicates);
                     break;
                 case CEREBELLUM:
-                    if (bucket.cerebellum != null) {
-                        bucket.duplicates.add("Cerebellum (\"" + bucket.cerebellum.getName() + "\" and \"" + name + "\")");
-                    }
-                    bucket.cerebellum = roi;
+                    bucket.cerebellum = assign(bucket.cerebellum, roi, "Cerebellum", bucket.duplicates);
                     break;
                 case WHITE_MATTER:
-                    if (bucket.whiteMatter != null) {
-                        bucket.duplicates.add("WhiteMatter (\"" + bucket.whiteMatter.getName() + "\" and \"" + name + "\")");
-                    }
-                    bucket.whiteMatter = roi;
+                    bucket.whiteMatter = assign(bucket.whiteMatter, roi, "White Matter", bucket.duplicates);
                     break;
+                default:
+                    throw new IllegalStateException("Unhandled category " + c.category);
             }
+        }
+
+        if (skippedOutputs > 0) {
+            diag.note("Skipped " + skippedOutputs + " measurement ROI(s) added by an earlier run of this plugin.");
+        }
+        if (!ignored.isEmpty()) {
+            List<String> shown = ignored.subList(0, Math.min(ignored.size(), MAX_IGNORED_NAMES_LISTED));
+            diag.note("Ignored " + ignored.size() + " ROI(s) whose names don't match any expected layer: "
+                    + String.join(", ", shown) + (ignored.size() > shown.size() ? ", …" : "") + ".");
         }
 
         if (buckets.isEmpty()) {
@@ -193,149 +202,110 @@ public final class ROIValidator {
             int instance = entry.getKey();
             InstanceBucket b = entry.getValue();
             String prefix = multiInstance ? "[Instance " + instance + "] " : "";
+            String prefixHint = multiInstance ? " (with the \"" + instance + "\" prefix for this instance)" : "";
             boolean isSecondary = instance != 1;
+            int problemsBefore = problems.size();
 
             for (String dup : b.duplicates) {
                 problems.add(prefix + "More than one ROI matches " + dup + " — rename or remove one.");
             }
 
             if (b.cerebellum == null) {
-                problems.add(prefix + "Missing the Cerebellum ROI. "
-                        + "Add a closed polygon whose name contains \"cerebellum\" or the abbreviation \"CB\""
-                        + (multiInstance ? " (with the \"" + instance + "\" prefix for this instance)." : "."));
-            } else if (isLineType(b.cerebellum)) {
+                problems.add(prefix + "Missing the Cerebellum ROI. Add a closed polygon whose name contains "
+                        + "\"cerebellum\" or the abbreviation \"CB\"" + prefixHint + ".");
+            } else if (!b.cerebellum.isArea()) {
                 problems.add(prefix + "The Cerebellum ROI (\"" + b.cerebellum.getName()
-                        + "\") is a polyline, not a closed area. Retrace it as a closed polygon.");
+                        + "\") is not a closed area. Retrace it as a closed polygon.");
             }
 
             if (b.granularWM == null) {
-                problems.add(prefix + "Missing the Granular+WM ROI. "
-                        + "Add a closed polygon whose name contains \"granular\", \"GL+WM\", \"GLWM\", or similar.");
-            } else if (isLineType(b.granularWM)) {
+                problems.add(prefix + "Missing the Granular+WM ROI. Add a closed polygon whose name contains "
+                        + "\"granular\", \"GL+WM\", \"GLWM\", or similar" + prefixHint + ".");
+            } else if (!b.granularWM.isArea()) {
                 problems.add(prefix + "The Granular+WM ROI (\"" + b.granularWM.getName()
-                        + "\") is a polyline, not a closed area. Retrace it as a closed polygon.");
+                        + "\") is not a closed area. Retrace it as a closed polygon.");
             }
 
-            // White Matter is optional for EVERY instance. Some scan sections simply contain no
-            // white-matter core (e.g. a peripheral cut through cortex only), so requiring it would
-            // block otherwise-valid sections. When it is absent, that instance's Grey Matter and
-            // Granular Layer numbers just won't have White Matter excluded from them (there's
-            // nothing to subtract), and — see the fissure handling below — no fissures are needed
-            // or used, since a section with no white matter isn't split into lobules here.
-            if (b.whiteMatter != null && isLineType(b.whiteMatter)) {
-                problems.add(prefix + "The WhiteMatter ROI (\"" + b.whiteMatter.getName()
-                        + "\") is a polyline, not a closed area. Retrace it as a closed polygon.");
+            if (b.whiteMatter != null && !b.whiteMatter.isArea()) {
+                problems.add(prefix + "The White Matter ROI (\"" + b.whiteMatter.getName()
+                        + "\") is not a closed area. Retrace it as a closed polygon.");
             }
 
+            PolygonRoi purkinje = null;
             if (b.purkinje == null) {
-                problems.add(prefix + "Missing the Purkinje ROI. "
-                        + "Add an open polyline whose name contains \"purkinje\" or the abbreviation \"PL\".");
-            } else if (!isLineType(b.purkinje)) {
+                problems.add(prefix + "Missing the Purkinje ROI. Add an open line whose name contains "
+                        + "\"purkinje\" or the abbreviation \"PL\"" + prefixHint + ".");
+            } else if (!b.purkinje.isLine()) {
                 problems.add(prefix + "The Purkinje ROI (\"" + b.purkinje.getName()
-                        + "\") is a closed area, not a polyline. Retrace it as an open polyline.");
-            } else if (!(b.purkinje instanceof PolygonRoi)) {
-                problems.add(prefix + "The Purkinje ROI (\"" + b.purkinje.getName()
-                        + "\") could not be read as a polyline.");
+                        + "\") is a closed area, not a line. Retrace it with the Segmented Line tool.");
+            } else {
+                purkinje = asPolyline(b.purkinje);
+                if (purkinje == null) {
+                    problems.add(prefix + "The Purkinje ROI (\"" + b.purkinje.getName()
+                            + "\") could not be read as a line. Retrace it with the Segmented Line tool.");
+                }
             }
 
-            // Fissures are required only for a primary instance that HAS White Matter. They are
-            // waived (and any that were traced are discarded) whenever White Matter is absent —
-            // for any instance — because a section with no white-matter core isn't partitioned
-            // into lobules; and they remain optional for secondary instances regardless, since
-            // some traced pieces exist only for whole-cerebellum totals. When White Matter is
-            // present, traced fissures are used normally.
+            // Fissures are required only for a primary instance that HAS White Matter; a section
+            // with no white-matter core isn't split into lobules, so its fissures are discarded.
             boolean fissuresRequired = !isSecondary && b.whiteMatter != null;
-            boolean discardFissures = b.whiteMatter == null;
             List<PolygonRoi> fissurePolylines = new ArrayList<>();
-            if (discardFissures) {
+            if (b.whiteMatter == null) {
                 if (!b.fissures.isEmpty()) {
-                    IJ.log("[Cerebellar Morphometry] " + prefix + "Note: " + b.fissures.size() + " fissure "
-                            + "ROI(s) found but ignored, since this instance has no White Matter ROI "
-                            + "(a section with no white-matter core isn't split into lobules). Trace White "
-                            + "Matter for this instance if you want it split into subsections.");
+                    diag.note(prefix + b.fissures.size() + " fissure ROI(s) found but ignored, since there is "
+                            + "no White Matter ROI (a section with no white-matter core isn't split into "
+                            + "lobules). Trace White Matter if you want it split into subsections.");
                 } else {
-                    IJ.log("[Cerebellar Morphometry] " + prefix + "Note: no White Matter ROI, so this "
-                            + "instance won't be split into subsections, and its Grey Matter / Granular "
-                            + "Layer numbers won't have White Matter excluded. Trace White Matter for this "
-                            + "instance if you want either of those.");
+                    diag.note(prefix + "No White Matter ROI, so this section won't be split into subsections, "
+                            + "and its Grey Matter / Granular Layer numbers won't have White Matter excluded.");
                 }
             } else if (b.fissures.isEmpty()) {
                 if (fissuresRequired) {
-                    problems.add(prefix + "No fissure ROIs found. Add at least one open polyline named "
-                            + "\"fissure\" or \"FL1\", \"FL2\", … (see README for how many you need).");
+                    problems.add(prefix + "No fissure ROIs found. Add at least one open line named "
+                            + "\"fissure\" or \"FL1\", \"FL2\", … (see the README for how many you need).");
                 } else {
-                    IJ.log("[Cerebellar Morphometry] " + prefix + "Note: no fissures traced for this "
-                            + "instance, so it won't be split into subsections (whole-cerebellum totals "
-                            + "are still measured normally). Trace fissures for this instance if you want "
-                            + "lobule-level detail.");
+                    diag.note(prefix + "No fissures traced, so this piece won't be split into subsections "
+                            + "(its whole-cerebellum totals are still measured).");
                 }
             } else {
                 for (Roi f : b.fissures) {
-                    if (!isLineType(f)) {
+                    if (!f.isLine()) {
                         problems.add(prefix + "Fissure ROI \"" + f.getName()
-                                + "\" is a closed area, not a polyline. Retrace it as an open polyline.");
-                    } else if (!(f instanceof PolygonRoi)) {
-                        problems.add(prefix + "Fissure ROI \"" + f.getName() + "\" could not be read as a polyline.");
+                                + "\" is a closed area, not a line. Retrace it with the Segmented Line tool.");
+                        continue;
+                    }
+                    PolygonRoi polyline = asPolyline(f);
+                    if (polyline == null) {
+                        problems.add(prefix + "Fissure ROI \"" + f.getName() + "\" could not be read as a line.");
                     } else {
-                        fissurePolylines.add((PolygonRoi) f);
+                        fissurePolylines.add(polyline);
                     }
                 }
             }
 
-            // Containment checks (only run when the relevant ROIs are confirmed present and area-typed).
-            // These are informational, not blocking: WhiteMatter or Granular+WM is allowed to reach or
-            // extend past its "parent" shape's boundary. This is deliberately supported, not just
-            // tolerated — at the cerebellar peduncle (where the cerebellum attaches to the brainstem),
-            // there is no molecular/granular layering at all, so tracing White Matter out to meet the
-            // Cerebellum boundary there is anatomically correct. It's also structurally useful: since
-            // Cerebellum is a single closed outline and the fissures only span the foliated arc between
-            // the first and last lobule, without a pinch point somewhere the ribbon FissurePartitioner
-            // cuts stays a single closed loop and its two ends never separate. Deliberately closing the
-            // White-Matter-to-Cerebellum gap at the peduncle gives that missing cut for free. See the
-            // README's "Closing the loop" section. A large "outside" percentage is still logged, since
-            // it can also indicate a genuine tracing or ROI-naming mistake.
-            if (b.cerebellum != null && b.granularWM != null
-                    && !isLineType(b.cerebellum) && !isLineType(b.granularWM)) {
-                double granularWMArea = BooleanROIProcessor.area(b.granularWM, imp);
-                double outside = BooleanROIProcessor.area(
-                        BooleanROIProcessor.subtract(b.granularWM, b.cerebellum), imp);
-                if (!withinTolerance(outside, granularWMArea)) {
-                    IJ.log("[Cerebellar Morphometry] " + prefix + "Note: ~" + percentOutside(outside, granularWMArea)
-                            + "% of the Granular+WM ROI's area falls outside the Cerebellum ROI. This is fine if "
-                            + "intentional (e.g. tracing out to the pial surface at the peduncle to separate the "
-                            + "first and last lobule) — otherwise, double check the two ROIs weren't traced from "
-                            + "different sections or accidentally swapped.");
-                }
-            }
-            if (b.granularWM != null && b.whiteMatter != null
-                    && !isLineType(b.granularWM) && !isLineType(b.whiteMatter)) {
-                double whiteMatterArea = BooleanROIProcessor.area(b.whiteMatter, imp);
-                double outside = BooleanROIProcessor.area(
-                        BooleanROIProcessor.subtract(b.whiteMatter, b.granularWM), imp);
-                if (!withinTolerance(outside, whiteMatterArea)) {
-                    IJ.log("[Cerebellar Morphometry] " + prefix + "Note: ~" + percentOutside(outside, whiteMatterArea)
-                            + "% of the WhiteMatter ROI's area falls outside the Granular+WM ROI. This is fine if "
-                            + "intentional (e.g. tracing out to the Granular+WM boundary at the peduncle to "
-                            + "separate the first and last lobule) — otherwise, double check the two ROIs weren't "
-                            + "traced from different sections or accidentally swapped.");
-                }
+            if (problems.size() > problemsBefore) {
+                continue; // this instance has problems; skip the (informational) containment checks
             }
 
-            boolean whiteMatterTypeOk = b.whiteMatter == null || !isLineType(b.whiteMatter);
-            if (b.cerebellum != null && b.granularWM != null && b.purkinje != null
-                    && (!fissuresRequired || !fissurePolylines.isEmpty())
-                    && !isLineType(b.cerebellum) && !isLineType(b.granularWM) && whiteMatterTypeOk) {
-                result.put(instance, new LayerSet(b.cerebellum, b.granularWM, b.whiteMatter,
-                        (PolygonRoi) b.purkinje, fissurePolylines));
+            // Containment checks are informational, not blocking: White Matter or Granular+WM is
+            // allowed to reach or extend past its "parent" outline. At the peduncle this is
+            // anatomically correct, and it is how the ring of grey matter is deliberately pinched
+            // open so the first and last lobules separate (README: "Closing the loop"). A large
+            // percentage is still worth a note, since it can also mean swapped or mis-traced ROIs.
+            noteOutside(b.granularWM, b.cerebellum, imp, prefix, "Granular+WM", "Cerebellum", diag);
+            if (b.whiteMatter != null) {
+                noteOutside(b.whiteMatter, b.granularWM, imp, prefix, "White Matter", "Granular+WM", diag);
             }
+
+            result.put(instance, new LayerSet(b.cerebellum, b.granularWM, b.whiteMatter, purkinje, fissurePolylines));
         }
 
         if (!problems.isEmpty()) {
             if (multiInstance) {
                 problems.add(0, "Detected " + buckets.size() + " instances from ROI name prefixes "
                         + buckets.keySet() + " (see \"Multiple instances\" in the README). If you only meant "
-                        + "to trace one section, this usually means a ROI ended up with a name starting in a "
-                        + "digit by accident — check for that instead of tracing a second instance.");
+                        + "to trace one section, a ROI name probably starts with a digit by accident — "
+                        + "check for that instead of tracing another instance.");
             }
             throw new ValidationException(problems);
         }
@@ -368,17 +338,42 @@ public final class ROIValidator {
         final List<String> duplicates = new ArrayList<>();
     }
 
+    /** Records a duplicate when {@code current} is already set; returns the ROI to keep. */
+    private static Roi assign(Roi current, Roi candidate, String what, List<String> duplicates) {
+        if (current != null) {
+            String hint = looksLikeLayerOutput(current) || looksLikeLayerOutput(candidate)
+                    ? " (a whole-layer ROI such as \"Granular Layer\" may have been added by an earlier run "
+                      + "of this plugin; if so, delete it)"
+                    : "";
+            duplicates.add(what + " (\"" + current.getName() + "\" and \"" + candidate.getName() + "\")" + hint);
+        }
+        return candidate;
+    }
+
+    private static boolean looksLikeLayerOutput(Roi roi) {
+        String name = roi.getName() == null ? "" : roi.getName().trim();
+        return name.equalsIgnoreCase("Grey Matter") || name.equalsIgnoreCase("Granular Layer")
+                || name.equalsIgnoreCase("Molecular Layer");
+    }
+
     /**
-     * Strips an optional leading run of digits from {@code lower} (the instance number —
-     * absent means instance 1) and classifies the remainder using the existing
-     * priority-ordered name matchers. Returns {@code null} if nothing matches at all.
+     * Strips an optional leading run of digits from {@code lower} (the instance number &mdash;
+     * absent means instance 1) and classifies the remainder using the priority-ordered name
+     * matchers. Returns {@code null} if nothing matches, or if the leading number is too long to
+     * be an instance number.
      */
-    private static Classification classify(String lower) {
+    static Classification classify(String lower) {
         int i = 0;
         while (i < lower.length() && Character.isDigit(lower.charAt(i))) {
             i++;
         }
+        if (i > MAX_INSTANCE_DIGITS) {
+            return null;
+        }
         int instance = (i == 0) ? 1 : Integer.parseInt(lower.substring(0, i));
+        if (instance == 0) {
+            return null; // "0…" is not a valid instance number (instances start at 1)
+        }
         String rest = lower.substring(i);
 
         if (matchesFissure(rest))     return new Classification(Category.FISSURE, instance);
@@ -393,9 +388,7 @@ public final class ROIValidator {
     // Name-matching predicates (operate on the name AFTER instance-prefix stripping)
     // -----------------------------------------------------------------------
 
-    /**
-     * Cerebellum: "cerebellum" anywhere, OR whole-word "cb".
-     */
+    /** Cerebellum: "cerebellum" anywhere, OR whole-word "cb". */
     private static boolean matchesCerebellum(String lower) {
         return lower.contains("cerebellum") || isWholeWord(lower, "cb");
     }
@@ -412,23 +405,15 @@ public final class ROIValidator {
         if (lower.contains("gl+wm") || lower.contains("glwm")
                 || lower.contains("gl_wm") || lower.contains("gl-wm")
                 || lower.contains("gl wm")) return true;
-        // Whole-word "gl" together with whole-word "wm" anywhere in the name.
         return isWholeWord(lower, "gl") && isWholeWord(lower, "wm");
     }
 
-    /**
-     * White Matter: "white" anywhere, OR whole-word "wm".
-     * Because the dispatch chain tests Granular+WM first, a name like "GL+WM"
-     * never reaches this predicate.
-     */
+    /** White Matter: "white" anywhere, OR whole-word "wm". */
     private static boolean matchesWhiteMatter(String lower) {
         return lower.contains("white") || isWholeWord(lower, "wm");
     }
 
-    /**
-     * Purkinje: "purkinje" anywhere, OR whole-word "pl"
-     * (Purkinje Layer / Purkinje Line).
-     */
+    /** Purkinje: "purkinje" anywhere, OR whole-word "pl" (Purkinje Layer / Purkinje Line). */
     private static boolean matchesPurkinje(String lower) {
         return lower.contains("purkinje") || isWholeWord(lower, "pl");
     }
@@ -451,11 +436,9 @@ public final class ROIValidator {
     private static boolean matchesFLNumbered(String lower) {
         int idx = 0;
         while ((idx = lower.indexOf("fl", idx)) >= 0) {
-            boolean beforeOk = idx == 0
-                    || !Character.isLetterOrDigit(lower.charAt(idx - 1));
+            boolean beforeOk = idx == 0 || !Character.isLetterOrDigit(lower.charAt(idx - 1));
             int afterIdx = idx + 2;
-            boolean afterOk = afterIdx < lower.length()
-                    && !Character.isLetter(lower.charAt(afterIdx));
+            boolean afterOk = afterIdx < lower.length() && !Character.isLetter(lower.charAt(afterIdx));
             if (beforeOk && afterOk) return true;
             idx++;
         }
@@ -467,19 +450,14 @@ public final class ROIValidator {
     // -----------------------------------------------------------------------
 
     /**
-     * Returns true when {@code token} appears in {@code lower} as a complete
-     * word — bounded by non-alphanumeric characters or string start/end. This
-     * predicate runs on the name AFTER any leading instance-number digits have
-     * already been stripped by {@link #classify}, so a name like "2cb" arrives
-     * here as plain "cb".
-     * Examples: isWholeWord("cb_outline", "cb") → true,
-     *           isWholeWord("flat", "fl")        → false (not a whole word).
+     * Returns true when {@code token} appears in {@code lower} as a complete word — bounded by
+     * non-alphanumeric characters or string start/end.
+     * Examples: isWholeWord("cb_outline", "cb") → true, isWholeWord("flat", "fl") → false.
      */
     private static boolean isWholeWord(String lower, String token) {
         int idx = 0;
         while ((idx = lower.indexOf(token, idx)) >= 0) {
-            boolean beforeOk = idx == 0
-                    || !Character.isLetterOrDigit(lower.charAt(idx - 1));
+            boolean beforeOk = idx == 0 || !Character.isLetterOrDigit(lower.charAt(idx - 1));
             boolean afterOk  = (idx + token.length() >= lower.length())
                     || !Character.isLetterOrDigit(lower.charAt(idx + token.length()));
             if (beforeOk && afterOk) return true;
@@ -488,18 +466,37 @@ public final class ROIValidator {
         return false;
     }
 
-    private static boolean isLineType(Roi roi) {
-        int type = roi.getType();
-        return type == Roi.LINE || type == Roi.POLYLINE || type == Roi.FREELINE;
+    /**
+     * A line ROI as an open polyline: polylines and freehand lines as they are, a straight
+     * {@link Line} as a two-point polyline. Returns {@code null} for anything else.
+     */
+    private static PolygonRoi asPolyline(Roi roi) {
+        if (roi instanceof PolygonRoi && roi.isLine()) {
+            return (PolygonRoi) roi;
+        }
+        if (roi instanceof Line) {
+            Line line = (Line) roi;
+            PolygonRoi polyline = new PolygonRoi(
+                    new float[] {(float) line.x1d, (float) line.x2d},
+                    new float[] {(float) line.y1d, (float) line.y2d}, 2, Roi.POLYLINE);
+            polyline.setName(roi.getName());
+            return polyline;
+        }
+        return null;
     }
 
-    private static boolean withinTolerance(double outsideArea, double referenceArea) {
-        double tolerance = Math.max(referenceArea * CONTAINMENT_TOLERANCE_FRACTION, 1e-9);
-        return outsideArea <= tolerance;
-    }
-
-    private static String percentOutside(double outsideArea, double referenceArea) {
-        if (referenceArea <= 0) return "?";
-        return String.format("%.1f", 100.0 * outsideArea / referenceArea);
+    /** Logs a note when a noticeable part of {@code inner} lies outside {@code outer}. */
+    private static void noteOutside(Roi inner, Roi outer, ImagePlus imp, String prefix,
+            String innerName, String outerName, Diagnostics diag) {
+        double innerArea = BooleanROIProcessor.area(inner, imp);
+        double outside = BooleanROIProcessor.area(BooleanROIProcessor.subtract(inner, outer), imp);
+        double tolerance = Math.max(innerArea * CONTAINMENT_TOLERANCE_FRACTION, 1e-9);
+        if (outside > tolerance && innerArea > 0) {
+            diag.note(prefix + String.format(Locale.ROOT, "~%.1f%%", 100.0 * outside / innerArea)
+                    + " of the " + innerName + " ROI's area falls outside the " + outerName + " ROI. This is "
+                    + "fine if intentional (e.g. tracing out through the peduncle to separate the first and "
+                    + "last lobule); otherwise check that the two ROIs weren't traced on different sections "
+                    + "or swapped.");
+        }
     }
 }

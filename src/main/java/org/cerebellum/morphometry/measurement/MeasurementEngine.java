@@ -2,118 +2,136 @@ package org.cerebellum.morphometry.measurement;
 
 import ij.ImagePlus;
 import ij.measure.Calibration;
-import org.cerebellum.morphometry.geometry.*;
-import org.cerebellum.morphometry.model.*;
+import org.cerebellum.morphometry.Diagnostics;
+import org.cerebellum.morphometry.geometry.BooleanROIProcessor;
+import org.cerebellum.morphometry.geometry.FissurePartitioner;
+import org.cerebellum.morphometry.geometry.LayerConstructor;
+import org.cerebellum.morphometry.geometry.PartitionClipper;
+import org.cerebellum.morphometry.geometry.PurkinjeLengthCalculator;
+import org.cerebellum.morphometry.geometry.ROIValidator;
+import org.cerebellum.morphometry.model.ConstructedLayers;
+import org.cerebellum.morphometry.model.InstanceResult;
+import org.cerebellum.morphometry.model.LayerSet;
+import org.cerebellum.morphometry.model.MorphometryResults;
+import org.cerebellum.morphometry.model.PartitionSet;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.SortedMap;
 
 /**
- * Ties together every geometry class and produces the complete {@link MorphometryResults}
- * object. This is the single call the plugin controller makes after validation passes.
+ * Ties together every geometry class and produces the {@link MorphometryResults}.
  *
- * <p>Execution order:
+ * <p>Execution order, per instance:</p>
  * <ol>
  *   <li>{@link LayerConstructor} &rarr; Grey, Granular, Molecular shapes for the whole cerebellum.</li>
- *   <li>{@link FissurePartitioner} &rarr; N+1 lobule regions (from N traced fissures) plus their Purkinje arc-length bounds.</li>
- *   <li>{@link PartitionClipper} &rarr; per-partition Granular and Molecular clips.</li>
+ *   <li>{@link FissurePartitioner} &rarr; lobule regions that tile the grey matter.</li>
+ *   <li>{@link PartitionClipper} &rarr; per-lobule Granular and Molecular clips.</li>
  *   <li>Area and length measurement using {@link BooleanROIProcessor} and
  *       {@link PurkinjeLengthCalculator}.</li>
  * </ol>
- * </p>
+ *
+ * <p>Steps 1&ndash;3 ({@link #buildGeometry}) are computed once and shared by the measurement,
+ * the overlay and the ROI Manager export, so all three are guaranteed to describe the same
+ * shapes.</p>
  */
 public final class MeasurementEngine {
+
+    /** Sections covering less of the grey matter than this trigger a warning. */
+    private static final double MIN_SECTION_AREA_COVERAGE = 0.99;
+    /** Sections holding less of the Purkinje line than this trigger a note. */
+    private static final double MIN_SECTION_PURKINJE_COVERAGE = 0.99;
 
     private MeasurementEngine() {
     }
 
     /**
-     * Full pipeline: geometry construction &rarr; subdivision &rarr; measurement.
-     *
-     * @param layers the validated, typed ROI bundle
-     * @param imp    the active image (needed for calibrated area; pixel content is never read)
-     * @return all numbers needed to populate the output table
+     * Validated instances in, one {@link InstanceResult} per instance out (in instance order).
+     * Messages from each instance are prefixed with its number when there is more than one.
      */
-    public static MorphometryResults measure(LayerSet layers, ImagePlus imp) {
-
-        // Step 1: build the three whole-cerebellum layers.
-        ConstructedLayers constructed = LayerConstructor.construct(layers);
-
-        // Step 2: cut into lobule partitions (N+1 from N traced fissures) — or skip entirely
-        // if there are no fissures at all (see partitionOrEmpty: this happens for secondary
-        // instances traced without White Matter, where partitioning isn't attempted).
-        PartitionSet partitionSet = partitionOrEmpty(layers);
-
-        // Step 3: clip each partition's granular and molecular shapes.
-        List<PartitionClipper.ClippedPartition> clipped =
-                PartitionClipper.clip(constructed, partitionSet);
-
-        // Step 4: whole-cerebellum measurements.
-        double cerebellumArea  = BooleanROIProcessor.area(layers.getCerebellum(), imp);
-        double greyMatterArea  = BooleanROIProcessor.area(constructed.getGrey(), imp);
-        double granularArea    = BooleanROIProcessor.area(constructed.getGranular(), imp);
-        double molecularArea   = BooleanROIProcessor.area(constructed.getMolecular(), imp);
-        double totalPurkinje   = PurkinjeLengthCalculator.totalLength(layers.getPurkinje(), imp);
-        double totalPurkinjeArea = PurkinjeLengthCalculator.totalArea(layers.getPurkinje(), imp);
-
-        // Step 5: per-subsection measurements.
-        List<MorphometryResults.SubsectionResult> subsections = new ArrayList<>(clipped.size());
-        List<PartitionSet.Partition> partitions = partitionSet.getPartitions();
-        for (int i = 0; i < clipped.size(); i++) {
-            PartitionClipper.ClippedPartition cp = clipped.get(i);
-            PartitionSet.Partition p = partitions.get(i);
-
-            double subGranular  = BooleanROIProcessor.area(cp.granular, imp);
-            double subMolecular = BooleanROIProcessor.area(cp.molecular, imp);
-            // Measured by containment, not arc range: a ring-shaped layer has one section that
-            // wraps past the end of the Purkinje line and resumes at its start, owning two
-            // disjoint stretches of it. See PurkinjeLengthCalculator.lengthInside.
-            double subPurkinje  = PurkinjeLengthCalculator.lengthInside(
-                    layers.getPurkinje(), imp, p.getRegion());
-
-            subsections.add(new MorphometryResults.SubsectionResult(
-                    cp.label, subGranular, subMolecular, subPurkinje));
+    public static List<InstanceResult> analyze(SortedMap<Integer, LayerSet> instances, ImagePlus imp,
+            Diagnostics diag) {
+        boolean multi = instances.size() > 1;
+        List<InstanceResult> results = new ArrayList<>(instances.size());
+        for (Map.Entry<Integer, LayerSet> entry : instances.entrySet()) {
+            int instance = entry.getKey();
+            Diagnostics d = multi ? diag.withPrefix("[Instance " + instance + "] ") : diag;
+            IntermediateGeometry geo = buildGeometry(entry.getValue(), d);
+            MorphometryResults measured = measure(entry.getValue(), geo, imp, d);
+            results.add(new InstanceResult(instance, entry.getValue(), geo, measured));
         }
-
-        // Determine unit strings from the image calibration.
-        Calibration cal = imp.getCalibration();
-        String unit      = (cal != null && cal.getUnit() != null) ? cal.getUnit() : "px";
-        String areaUnit  = unit + "\u00B2"; // e.g. "µm²"
-        String lengthUnit = unit;
-
-        return new MorphometryResults(
-                cerebellumArea, greyMatterArea, granularArea, molecularArea, totalPurkinje, totalPurkinjeArea,
-                subsections, areaUnit, lengthUnit);
+        return results;
     }
 
     /**
-     * Exposes the intermediate geometry for the overlay renderer without re-running the
-     * full measurement pipeline. Returns an object carrying constructed layers,
-     * partitions, and clips so {@link org.cerebellum.morphometry.visualization.OverlayRenderer}
-     * can use them directly.
+     * Builds the whole-cerebellum layers, the lobule partition and the per-lobule clips for one
+     * instance. No pixel content is read.
      */
-    public static IntermediateGeometry buildGeometry(LayerSet layers) {
+    public static IntermediateGeometry buildGeometry(LayerSet layers, Diagnostics diag) {
         ConstructedLayers constructed = LayerConstructor.construct(layers);
-        PartitionSet partitionSet     = partitionOrEmpty(layers);
-        List<PartitionClipper.ClippedPartition> clipped =
-                PartitionClipper.clip(constructed, partitionSet);
+        PartitionSet partitionSet = layers.getFissures().isEmpty()
+                ? PartitionSet.empty()
+                : FissurePartitioner.partition(layers, diag);
+        List<PartitionClipper.ClippedPartition> clipped = PartitionClipper.clip(constructed, partitionSet);
         return new IntermediateGeometry(constructed, partitionSet, clipped);
     }
 
     /**
-     * Runs {@link FissurePartitioner#partition}, or returns an empty {@link PartitionSet}
-     * (no subsections, no cut lines) without calling it at all when there are no fissures —
-     * which {@code FissurePartitioner} itself doesn't accept (it requires at least one).
-     * Zero fissures is a legitimate state for any instance traced without White Matter (see
-     * {@link ROIValidator}): a section with no white-matter core isn't split into lobules, so
-     * partitioning isn't attempted. It's also legitimate for a secondary instance traced only
-     * for its overall extent.
+     * Measures one instance's already-built geometry.
+     *
+     * @param layers the validated input ROIs
+     * @param geo    the geometry from {@link #buildGeometry} for the same {@code layers}
+     * @param imp    the active image (needed for calibration; pixel content is never read)
+     * @param diag   receives coverage warnings
      */
-    private static PartitionSet partitionOrEmpty(LayerSet layers) {
-        if (layers.getFissures().isEmpty()) {
-            return new PartitionSet(java.util.Collections.emptyList(), java.util.Collections.emptyList());
+    public static MorphometryResults measure(LayerSet layers, IntermediateGeometry geo, ImagePlus imp,
+            Diagnostics diag) {
+        ConstructedLayers constructed = geo.constructed;
+
+        double cerebellumArea    = BooleanROIProcessor.area(layers.getCerebellum(), imp);
+        double greyMatterArea    = BooleanROIProcessor.area(constructed.getGrey(), imp);
+        double granularArea      = BooleanROIProcessor.area(constructed.getGranular(), imp);
+        double molecularArea     = BooleanROIProcessor.area(constructed.getMolecular(), imp);
+        double totalPurkinje     = PurkinjeLengthCalculator.totalLength(layers.getPurkinje(), imp);
+        double totalPurkinjeArea = PurkinjeLengthCalculator.totalArea(layers.getPurkinje(), imp);
+
+        List<MorphometryResults.SubsectionResult> subsections = new ArrayList<>(geo.clipped.size());
+        List<PartitionSet.Partition> partitions = geo.partitionSet.getPartitions();
+        double sectionArea = 0;
+        double sectionPurkinje = 0;
+        for (int i = 0; i < geo.clipped.size(); i++) {
+            PartitionClipper.ClippedPartition cp = geo.clipped.get(i);
+            double subGranular  = BooleanROIProcessor.area(cp.granular, imp);
+            double subMolecular = BooleanROIProcessor.area(cp.molecular, imp);
+            double subPurkinje  = PurkinjeLengthCalculator.lengthInside(
+                    layers.getPurkinje(), imp, partitions.get(i).getRegion());
+            sectionArea += subGranular + subMolecular;
+            sectionPurkinje += subPurkinje;
+            subsections.add(new MorphometryResults.SubsectionResult(cp.label, subGranular, subMolecular, subPurkinje));
         }
-        return FissurePartitioner.partition(layers);
+
+        if (!subsections.isEmpty()) {
+            if (greyMatterArea > 0 && sectionArea < greyMatterArea * MIN_SECTION_AREA_COVERAGE) {
+                diag.warn(String.format(Locale.ROOT,
+                        "The sections only cover %.1f%% of the grey matter area, so per-section areas will not "
+                        + "add up to the totals. Check the overlay for grey matter left outside every section.",
+                        100.0 * sectionArea / greyMatterArea));
+            }
+            if (totalPurkinje > 0 && sectionPurkinje < totalPurkinje * MIN_SECTION_PURKINJE_COVERAGE) {
+                diag.note(String.format(Locale.ROOT,
+                        "%.1f%% of the Purkinje line lies outside the grey matter, so it is counted in the "
+                        + "total length but not in any section.",
+                        100.0 * (totalPurkinje - sectionPurkinje) / totalPurkinje));
+            }
+        }
+
+        Calibration cal = imp.getCalibration();
+        String unit = (cal != null && cal.getUnit() != null) ? cal.getUnit() : "pixel";
+        return new MorphometryResults(
+                cerebellumArea, greyMatterArea, granularArea, molecularArea, totalPurkinje, totalPurkinjeArea,
+                subsections, unit + "²", unit);
     }
 
     /**
@@ -122,21 +140,17 @@ public final class MeasurementEngine {
      *
      * <p>This is the normal case for multi-instance input (see {@link ROIValidator}'s
      * "Multiple instances" section): the pieces aren't different specimens, they're parts of
-     * the same cerebellum that couldn't be outlined as one connected shape (broken during
-     * sectioning, disconnected islands in the cut plane, etc.). So:</p>
+     * the same cerebellum that couldn't be outlined as one connected shape. So:</p>
      * <ul>
-     *   <li><b>Whole-cerebellum totals are summed</b> across every piece — one Cerebellum
-     *       area, one Grey Matter area, one Purkinje length, and so on, covering all of them
-     *       together.</li>
+     *   <li><b>Whole-cerebellum totals are summed</b> across every piece.</li>
      *   <li><b>Subsections are concatenated</b> in instance order. A piece that was split by
      *       fissures contributes each of its own subsections; a piece traced without fissures
-     *       contributes exactly one subsection — itself — since it is anatomically one more
-     *       section of the same cerebellum, just one that had to be outlined separately.</li>
-     *   <li><b>Labels are re-assigned across the pooled list</b>, so an 8-subsection total
-     *       gets the standard anatomical names (2Cb … 10Cb) regardless of how the sections
-     *       were distributed across pieces. Sections are ordered by instance number first,
-     *       then by arc order within each piece — so name the pieces in anatomical order
-     *       (1, 2, 3, …) to get the labels lined up correctly.</li>
+     *       contributes exactly one subsection &mdash; itself.</li>
+     *   <li><b>Labels are re-assigned across the pooled list</b>, so an 8-subsection total gets
+     *       the standard anatomical names regardless of how the sections were distributed across
+     *       pieces &mdash; unless some piece's first and last lobules are joined, in which case
+     *       those names would be wrong. Sections are ordered by instance number first, then along
+     *       the Purkinje line within each piece.</li>
      * </ul>
      */
     public static MorphometryResults combine(List<InstanceResult> instances) {
@@ -149,9 +163,8 @@ public final class MeasurementEngine {
 
         double cerebellumArea = 0, greyMatterArea = 0, granularArea = 0, molecularArea = 0;
         double purkinjeLength = 0, purkinjeArea = 0;
+        boolean anyEndsJoined = false;
 
-        // Collect each piece's sections, in instance order. A piece with no fissures counts as
-        // one section in its own right (its whole-cerebellum numbers ARE that section's numbers).
         List<MorphometryResults.SubsectionResult> pooled = new ArrayList<>();
         for (InstanceResult inst : instances) {
             MorphometryResults r = inst.getResults();
@@ -161,6 +174,9 @@ public final class MeasurementEngine {
             molecularArea  += r.getMolecularLayerArea();
             purkinjeLength += r.getTotalPurkinjeLength();
             purkinjeArea   += r.getTotalPurkinjeArea();
+            if (inst.getGeometry() != null && inst.getGeometry().partitionSet.areEndsJoined()) {
+                anyEndsJoined = true;
+            }
 
             if (r.getSubsections().isEmpty()) {
                 pooled.add(new MorphometryResults.SubsectionResult(
@@ -170,9 +186,9 @@ public final class MeasurementEngine {
             }
         }
 
-        // Re-label across the pooled list, so the standard names apply when the pooled count
-        // matches the standard scheme, no matter how the sections were split across pieces.
-        String[] labels = FissurePartitioner.labelsForSubsectionCount(pooled.size());
+        String[] labels = anyEndsJoined
+                ? FissurePartitioner.genericLabels(pooled.size())
+                : FissurePartitioner.labelsForSubsectionCount(pooled.size());
         List<MorphometryResults.SubsectionResult> relabeled = new ArrayList<>(pooled.size());
         for (int i = 0; i < pooled.size(); i++) {
             MorphometryResults.SubsectionResult s = pooled.get(i);
@@ -187,14 +203,14 @@ public final class MeasurementEngine {
                 relabeled, first.getAreaUnit(), first.getLengthUnit());
     }
 
-    /** Carries the intermediate geometry objects so they can be passed to the overlay renderer. */
+    /** The geometry built for one instance, shared by measurement, overlay and ROI export. */
     public static final class IntermediateGeometry {
         public final ConstructedLayers constructed;
         public final PartitionSet partitionSet;
         public final List<PartitionClipper.ClippedPartition> clipped;
 
         public IntermediateGeometry(ConstructedLayers constructed, PartitionSet partitionSet,
-                                     List<PartitionClipper.ClippedPartition> clipped) {
+                                    List<PartitionClipper.ClippedPartition> clipped) {
             this.constructed  = constructed;
             this.partitionSet = partitionSet;
             this.clipped      = clipped;

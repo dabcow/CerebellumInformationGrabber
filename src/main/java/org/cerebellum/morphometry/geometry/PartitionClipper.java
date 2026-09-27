@@ -10,8 +10,8 @@ import java.util.List;
 /**
  * For each fissure-defined partition, clips the whole-cerebellum granular and molecular
  * layers down to that partition's footprint, via {@code AND}. Purkinje length is handled
- * separately by {@link PurkinjeLengthCalculator}, since (as noted on {@link PartitionSet})
- * it falls straight out of the arc-length bounds already stored on each partition.
+ * separately by {@link PurkinjeLengthCalculator#lengthInside}, which clips the Purkinje line
+ * against the same footprint.
  */
 public final class PartitionClipper {
 

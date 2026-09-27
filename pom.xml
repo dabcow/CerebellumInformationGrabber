@@ -6,7 +6,7 @@
 
     <groupId>org.cerebellum</groupId>
     <artifactId>cerebellar-layer-plugin</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <packaging>jar</packaging>
 
     <name>Cerebellar Layer Quantification Plugin</name>
@@ -15,80 +15,190 @@
         cerebellar histology sections (grey/granular/molecular layer areas, Purkinje
         line length, and per-lobule breakdowns defined by user-traced fissure lines).
     </description>
+    <url>https://github.com/dabcow/CerebellumInformationGrabber</url>
+
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+        </license>
+    </licenses>
+
+    <scm>
+        <url>https://github.com/dabcow/CerebellumInformationGrabber</url>
+        <connection>scm:git:https://github.com/dabcow/CerebellumInformationGrabber.git</connection>
+    </scm>
 
     <!--
         NOTE ON THIS POM:
-        We intentionally do NOT inherit from the org.scijava:pom-scijava parent BOM.
-        That parent is the "official" way to build SciJava-ecosystem components, but it
-        also pulls in an enforcer-plugin ruleset (bytecode-version checks, dependency
-        convergence rules, etc.) tuned for the SciJava project's own multi-module build,
-        which can produce confusing failures in a small standalone plugin. Depending
-        directly on net.imagej:ij, org.scijava:scijava-common and org.apache.poi:poi-ooxml
-        with pinned, verified versions is simpler, more predictable, and is itself a
-        completely standard way to build a FIJI plugin. If you would prefer the
-        pom-scijava parent (e.g. to fit into a multi-module SciJava build), see the
-        README for the swap.
+        This deliberately does NOT inherit from org.scijava:pom-scijava. That parent is the
+        "official" way to build SciJava-ecosystem components, but it brings an enforcer ruleset
+        tuned for the SciJava project's own builds. Depending directly on net.imagej:ij is
+        simpler and is a completely standard way to build an ImageJ 1.x plugin.
+
+        The plugin has NO runtime dependencies of its own. ImageJ is "provided" by FIJI, and the
+        .xlsx export is written by a small built-in writer. The result is a ~100 KB jar that can
+        be dropped into FIJI's plugins/ folder without adding a second copy of any library FIJI
+        already ships (version 1.0.0 bundled ImageJ, SciJava and Apache POI with its commons-*
+        dependencies into a 23 MB jar).
     -->
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <!-- FIJI releases since 2025 bundle Java 21; Java 17 is the minimum this plugin needs. -->
         <maven.compiler.release>17</maven.compiler.release>
+        <!-- Reproducible builds: fixed timestamp for every entry in the jar. -->
+        <project.build.outputTimestamp>2026-09-26T00:00:00Z</project.build.outputTimestamp>
+
         <ij.version>1.54p</ij.version>
-        <scijava-common.version>2.94.2</scijava-common.version>
+        <junit.version>6.1.3</junit.version>
         <poi.version>5.5.1</poi.version>
     </properties>
 
     <dependencies>
-        <!-- Legacy ImageJ1 API: PolygonRoi, ShapeRoi, RoiManager, ResultsTable, Overlay, etc. -->
+        <!-- ImageJ 1.x API: PolygonRoi, ShapeRoi, RoiManager, ResultsTable, Overlay, etc.
+             Provided by FIJI at runtime, so it must not be bundled into the plugin jar. -->
         <dependency>
             <groupId>net.imagej</groupId>
             <artifactId>ij</artifactId>
             <version>${ij.version}</version>
+            <scope>provided</scope>
         </dependency>
 
-        <!-- SciJava Command/@Plugin framework, for the ImageJ2-style entry point. -->
+        <!-- Tests -->
         <dependency>
-            <groupId>org.scijava</groupId>
-            <artifactId>scijava-common</artifactId>
-            <version>${scijava-common.version}</version>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
         </dependency>
-
-        <!-- Apache POI, for native .xlsx export. -->
+        <!-- Used only by the tests, to read back and check the .xlsx files the plugin writes. -->
         <dependency>
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
             <version>${poi.version}</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <build>
         <finalName>cerebellar-layer-plugin-${project.version}</finalName>
+
+        <resources>
+            <!-- Stamp the version into build.properties (read by BuildInfo), and nothing else. -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>**/build.properties</include>
+                </includes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <excludes>
+                    <exclude>**/build.properties</exclude>
+                </excludes>
+            </resource>
+        </resources>
+
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-clean-plugin</artifactId>
+                    <version>3.5.0</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-resources-plugin</artifactId>
+                    <version>3.5.0</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.16.0</version>
+                    <configuration>
+                        <compilerArgs>
+                            <arg>-Xlint:all,-serial,-processing</arg>
+                        </compilerArgs>
+                        <showWarnings>true</showWarnings>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.6.0</version>
+                    <configuration>
+                        <!-- ImageJ classes are used without a display. The Log4j setting silences
+                             a harmless "no logging provider" notice from Apache POI (test-only). -->
+                        <argLine>-Djava.awt.headless=true -Dlog4j2.statusLoggerLevel=OFF</argLine>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-jar-plugin</artifactId>
+                    <version>3.5.1</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-install-plugin</artifactId>
+                    <version>3.2.0</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-enforcer-plugin</artifactId>
+                    <version>3.6.3</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.13.0</version>
-            </plugin>
-
-            <!--
-                Builds a single runnable/droppable jar with all dependencies bundled,
-                so the .jar can be dropped straight into FIJI's plugins/ folder.
-            -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <version>3.5.3</version>
+                <artifactId>maven-enforcer-plugin</artifactId>
                 <executions>
                     <execution>
-                        <phase>package</phase>
+                        <id>enforce-build-environment</id>
                         <goals>
-                            <goal>shade</goal>
+                            <goal>enforce</goal>
                         </goals>
                         <configuration>
-                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[17,)</version>
+                                    <message>Building this plugin needs a JDK 17 or newer (see README: Setup).</message>
+                                </requireJavaVersion>
+                                <requireMavenVersion>
+                                    <version>[3.8,)</version>
+                                </requireMavenVersion>
+                            </rules>
                         </configuration>
                     </execution>
                 </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+                        </manifest>
+                    </archive>
+                </configuration>
             </plugin>
         </plugins>
     </build>

@@ -7,198 +7,183 @@ import ij.measure.Calibration;
 import ij.measure.Measurements;
 import ij.measure.ResultsTable;
 import ij.plugin.filter.Analyzer;
+import ij.process.ImageProcessor;
 
+import java.awt.Rectangle;
 import java.awt.geom.Point2D;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Calibrated length of the Purkinje polyline, as a whole and per fissure-defined
- * subsection. Per-subsection length does not need any polygon/line clipping: each
- * partition's boundaries were built (in {@link FissurePartitioner}) to pass through
- * specific, known arc-length positions along this same polyline, so a subsection's
- * Purkinje length is simply the calibrated length of the polyline between those two
- * positions.
+ * Calibrated length of the Purkinje polyline, as a whole and per subsection.
+ *
+ * <h2>Per-subsection length</h2>
+ * <p>A subsection's share of the Purkinje line is found by clipping the line against the
+ * subsection's region: each segment is walked in sub-pixel steps and every step is credited to
+ * the region containing its midpoint. Clipping at that resolution (rather than crediting each
+ * whole segment to wherever its midpoint happens to fall) matters for lines traced with the
+ * Segmented Line tool, whose segments are often tens of pixels long: a fissure crossing a long
+ * segment near its middle would otherwise move the entire segment into one neighbour or, if the
+ * midpoint fell exactly on the boundary, drop it from both.</p>
+ *
+ * <p>Clipping by containment rather than by arc-length range also handles a section that owns
+ * two disjoint stretches of the line &mdash; which happens when the grey matter is a closed ring
+ * and one section wraps around past the ends of the Purkinje line.</p>
  *
  * <h2>"Area" of a line</h2>
- * <p>This class also reports a Purkinje <em>area</em> ({@link #totalArea}), even though
- * a one-dimensional line doesn't have a meaningful area. It exists to match what
- * selecting the Purkinje ROI in the ROI Manager and clicking <em>Measure</em> would show
- * in the Area column &mdash; ImageJ's own Analyzer treats a line selection's "area" as
- * the number of pixels its path visits, times the calibrated area-per-pixel. That's a
- * real, reproducible number, just not a geometrically meaningful one; it's included here
- * for parity with what a user would see measuring the ROI directly, not because it means
- * anything biologically. Only the whole-line total is reported (not a per-lobule
- * breakdown) since that's the only version of this number that's actually useful.</p>
+ * <p>This class also reports a Purkinje <em>area</em> ({@link #totalArea}), even though a
+ * one-dimensional line doesn't have a meaningful area. It exists to match what selecting the
+ * Purkinje ROI in the ROI Manager and clicking <em>Measure</em> would show in the Area column
+ * &mdash; ImageJ's own Analyzer treats a line selection's "area" as the number of pixels its
+ * path visits, times the calibrated area-per-pixel. Only the whole-line total is reported.</p>
  */
 public final class PurkinjeLengthCalculator {
+
+    /** Maximum step, in pixels, used when clipping the line against a region. */
+    private static final double CLIP_STEP_PX = 0.25;
 
     private PurkinjeLengthCalculator() {
     }
 
-    /** Total calibrated length of the whole Purkinje polyline. */
-    public static double totalLength(PolygonRoi purkinje, ImagePlus imp) {
-        return lengthBetween(purkinje, imp, 0.0, pixelArcLength(purkinje));
-    }
-
-    /** Total length of the polyline, measured in plain pixel-space arc length (uncalibrated). */
-    public static double pixelArcLength(PolygonRoi purkinje) {
-        Point2D.Double[] points = GeometryUtils.extractPoints(purkinje);
-        double[] cumulative = GeometryUtils.cumulativeLengths(points);
-        return cumulative[cumulative.length - 1];
-    }
-
     /**
-     * Calibrated length of the portion of the Purkinje polyline between two pixel-space
-     * arc-length positions (as produced by {@link FissurePartitioner}, which works in
-     * pixel space throughout). Handles anisotropic pixel calibration correctly by scaling
-     * each x/y component independently before computing each sub-segment's Euclidean
-     * length, the same way {@code ij.gui.PolygonRoi#getLength()} calibrates a whole line.
+     * Total calibrated length of the whole Purkinje polyline. Handles anisotropic pixel
+     * calibration by scaling x and y separately before each segment's Euclidean length, the same
+     * way {@code PolygonRoi#getLength()} calibrates a line.
      */
-    public static double lengthBetween(PolygonRoi purkinje, ImagePlus imp, double pixelArcStart, double pixelArcEnd) {
-        Point2D.Double[] points = GeometryUtils.extractPoints(purkinje);
-        double[] cumulative = GeometryUtils.cumulativeLengths(points);
-
-        Calibration cal = imp.getCalibration();
-        double pixelWidth = cal != null ? cal.pixelWidth : 1.0;
-        double pixelHeight = cal != null ? cal.pixelHeight : 1.0;
-
-        double total = 0.0;
-        Point2D.Double prev = GeometryUtils.pointAtArcLength(points, cumulative, pixelArcStart);
-        for (int i = 0; i < points.length; i++) {
-            if (cumulative[i] <= pixelArcStart) {
-                continue;
-            }
-            if (cumulative[i] >= pixelArcEnd) {
-                break;
-            }
-            total += calibratedDistance(prev, points[i], pixelWidth, pixelHeight);
-            prev = points[i];
+    public static double totalLength(PolygonRoi purkinje, ImagePlus imp) {
+        Point2D.Double[] pts = GeometryUtils.extractPoints(purkinje);
+        double[] scale = pixelScale(imp);
+        double total = 0;
+        for (int i = 0; i < pts.length - 1; i++) {
+            total += calibratedDistance(pts[i], pts[i + 1], scale[0], scale[1]);
         }
-        Point2D.Double end = GeometryUtils.pointAtArcLength(points, cumulative, pixelArcEnd);
-        total += calibratedDistance(prev, end, pixelWidth, pixelHeight);
         return total;
     }
 
-    /**
-     * The actual sub-polyline of the Purkinje line between two pixel-space arc-length
-     * positions, as a standalone open-polyline {@link Roi} in the same absolute image
-     * coordinates as the source. Companion to {@link #lengthBetween}, which measures this
-     * same span without materializing it as a shape; use this when the geometry itself is
-     * needed (e.g. to add it to the ROI Manager as a named per-lobule Purkinje segment).
-     */
-    public static PolygonRoi extractSubPolyline(PolygonRoi purkinje, double pixelArcStart, double pixelArcEnd) {
-        Point2D.Double[] points = GeometryUtils.extractPoints(purkinje);
-        double[] cumulative = GeometryUtils.cumulativeLengths(points);
-
-        List<Point2D.Double> sub = new ArrayList<>();
-        sub.add(GeometryUtils.pointAtArcLength(points, cumulative, pixelArcStart));
-        for (int i = 0; i < points.length; i++) {
-            if (cumulative[i] <= pixelArcStart) {
-                continue;
-            }
-            if (cumulative[i] >= pixelArcEnd) {
-                break;
-            }
-            sub.add(points[i]);
-        }
-        sub.add(GeometryUtils.pointAtArcLength(points, cumulative, pixelArcEnd));
-
-        float[] xs = new float[sub.size()];
-        float[] ys = new float[sub.size()];
-        for (int i = 0; i < sub.size(); i++) {
-            xs[i] = (float) sub.get(i).x;
-            ys[i] = (float) sub.get(i).y;
-        }
-        return new PolygonRoi(xs, ys, xs.length, Roi.POLYLINE);
-    }
-
-    /**
-     * Calibrated length of the part of the Purkinje polyline that lies inside {@code region}.
-     *
-     * <p>Used in preference to {@link #lengthBetween} for per-section lengths, because a
-     * section's share of the Purkinje line isn't always a single contiguous arc range. When a
-     * layer is a closed ring (the normal case — see {@link FissurePartitioner}), one section
-     * wraps past the end of the Purkinje polyline and continues from its start, so it owns two
-     * disjoint stretches of it. Asking "which bits of the line are inside this region" handles
-     * that automatically, and needs no arc-range bookkeeping at all.</p>
-     */
+    /** Calibrated length of the part of the Purkinje polyline that lies inside {@code region}. */
     public static double lengthInside(PolygonRoi purkinje, ImagePlus imp, Roi region) {
         if (region == null) {
             return 0.0;
         }
-        Point2D.Double[] pts = GeometryUtils.extractPoints(purkinje);
-        Calibration cal = imp.getCalibration();
-        double pw = (cal != null) ? cal.pixelWidth : 1.0;
-        double ph = (cal != null) ? cal.pixelHeight : 1.0;
-
+        double[] scale = pixelScale(imp);
         double total = 0;
-        for (int i = 0; i < pts.length - 1; i++) {
-            double mx = (pts[i].x + pts[i + 1].x) / 2.0;
-            double my = (pts[i].y + pts[i + 1].y) / 2.0;
-            if (region.contains((int) Math.round(mx), (int) Math.round(my))) {
-                total += calibratedDistance(pts[i], pts[i + 1], pw, ph);
+        for (List<Point2D.Double> run : runsInside(purkinje, region)) {
+            for (int i = 0; i < run.size() - 1; i++) {
+                total += calibratedDistance(run.get(i), run.get(i + 1), scale[0], scale[1]);
             }
         }
         return total;
     }
 
     /**
-     * The stretch of the Purkinje polyline lying inside {@code region}, as a standalone open
-     * polyline {@link Roi} in absolute image coordinates — the geometry counterpart of
-     * {@link #lengthInside}, for adding to the ROI Manager. If the region owns more than one
-     * disjoint stretch (see {@code lengthInside}), the longest is returned.
+     * The stretches of the Purkinje polyline lying inside {@code region}, each as a standalone
+     * open-polyline {@link Roi} in absolute image coordinates &mdash; the geometry counterpart of
+     * {@link #lengthInside}, for adding to the ROI Manager. Usually one stretch; two when the
+     * region wraps around past the ends of the line. Empty if the line never enters the region.
      */
-    public static PolygonRoi extractInside(PolygonRoi purkinje, Roi region) {
-        Point2D.Double[] pts = GeometryUtils.extractPoints(purkinje);
+    public static List<PolygonRoi> segmentsInside(PolygonRoi purkinje, Roi region) {
+        List<PolygonRoi> out = new ArrayList<>();
+        if (region == null) {
+            return out;
+        }
+        for (List<Point2D.Double> run : runsInside(purkinje, region)) {
+            if (run.size() < 2) {
+                continue;
+            }
+            float[] xs = new float[run.size()];
+            float[] ys = new float[run.size()];
+            for (int i = 0; i < run.size(); i++) {
+                xs[i] = (float) run.get(i).x;
+                ys[i] = (float) run.get(i).y;
+            }
+            out.add(new PolygonRoi(xs, ys, xs.length, Roi.POLYLINE));
+        }
+        return out;
+    }
 
+    /**
+     * Clips the polyline against {@code region}, returning the maximal inside runs as point lists.
+     * Each segment is subdivided into steps of at most {@link #CLIP_STEP_PX}; a step is inside if
+     * the pixel containing its midpoint is inside the region. Original vertices are kept, so a
+     * run follows the traced line exactly and only its two ends are interpolated.
+     */
+    private static List<List<Point2D.Double>> runsInside(PolygonRoi purkinje, Roi region) {
+        Point2D.Double[] pts = GeometryUtils.extractPoints(purkinje);
+        PixelMask inRegion = new PixelMask(region);
         List<List<Point2D.Double>> runs = new ArrayList<>();
         List<Point2D.Double> current = null;
         for (int i = 0; i < pts.length - 1; i++) {
-            double mx = (pts[i].x + pts[i + 1].x) / 2.0;
-            double my = (pts[i].y + pts[i + 1].y) / 2.0;
-            boolean inside = region != null
-                    && region.contains((int) Math.round(mx), (int) Math.round(my));
-            if (inside) {
-                if (current == null) {
-                    current = new ArrayList<>();
-                    current.add(pts[i]);
-                    runs.add(current);
+            Point2D.Double a = pts[i];
+            Point2D.Double b = pts[i + 1];
+            int steps = Math.max(1, (int) Math.ceil(a.distance(b) / CLIP_STEP_PX));
+            for (int s = 0; s < steps; s++) {
+                double t0 = (double) s / steps;
+                double t1 = (double) (s + 1) / steps;
+                double tm = (t0 + t1) / 2;
+                double mx = a.x + tm * (b.x - a.x);
+                double my = a.y + tm * (b.y - a.y);
+                boolean inside = inRegion.contains((int) Math.floor(mx), (int) Math.floor(my));
+                if (inside) {
+                    if (current == null) {
+                        current = new ArrayList<>();
+                        current.add(lerp(a, b, t0));
+                        runs.add(current);
+                    }
+                    // Only materialise a point where the run ends or reaches an original vertex.
+                    if (s == steps - 1) {
+                        current.add(b);
+                    }
+                } else if (current != null) {
+                    current.add(lerp(a, b, t0));
+                    current = null;
                 }
-                current.add(pts[i + 1]);
-            } else {
-                current = null;
             }
         }
-        if (runs.isEmpty()) {
-            return null;
-        }
-
-        List<Point2D.Double> longest = runs.get(0);
-        double longestLen = pathLen(longest);
-        for (List<Point2D.Double> run : runs) {
-            double len = pathLen(run);
-            if (len > longestLen) {
-                longest = run;
-                longestLen = len;
-            }
-        }
-
-        float[] xs = new float[longest.size()];
-        float[] ys = new float[longest.size()];
-        for (int i = 0; i < longest.size(); i++) {
-            xs[i] = (float) longest.get(i).x;
-            ys[i] = (float) longest.get(i).y;
-        }
-        return new PolygonRoi(xs, ys, xs.length, Roi.POLYLINE);
+        return runs;
     }
 
-    private static double pathLen(List<Point2D.Double> pts) {
-        double len = 0;
-        for (int i = 1; i < pts.size(); i++) {
-            len += pts.get(i - 1).distance(pts.get(i));
+    /**
+     * Constant-time pixel membership test for an area {@link Roi}, using its rasterized mask
+     * (the same pixels ImageJ measures). {@code Roi#contains} on a traced {@code ShapeRoi} walks
+     * the whole outline on every call, which is far too slow for sub-pixel clipping.
+     */
+    private static final class PixelMask {
+        private final int x0;
+        private final int y0;
+        private final int w;
+        private final int h;
+        private final byte[] pixels; // null means "every pixel of the bounds" (plain rectangle)
+
+        PixelMask(Roi roi) {
+            Rectangle b = roi.getBounds();
+            ImageProcessor mask = roi.getMask();
+            x0 = b.x;
+            y0 = b.y;
+            w = mask != null ? mask.getWidth() : b.width;
+            h = mask != null ? mask.getHeight() : b.height;
+            pixels = mask != null ? (byte[]) mask.getPixels() : null;
         }
-        return len;
+
+        boolean contains(int x, int y) {
+            int lx = x - x0;
+            int ly = y - y0;
+            if (lx < 0 || ly < 0 || lx >= w || ly >= h) {
+                return false;
+            }
+            return pixels == null || pixels[ly * w + lx] != 0;
+        }
+    }
+
+    private static Point2D.Double lerp(Point2D.Double a, Point2D.Double b, double t) {
+        return new Point2D.Double(a.x + t * (b.x - a.x), a.y + t * (b.y - a.y));
+    }
+
+    private static double[] pixelScale(ImagePlus imp) {
+        Calibration cal = imp.getCalibration();
+        return new double[] {
+                cal != null ? cal.pixelWidth : 1.0,
+                cal != null ? cal.pixelHeight : 1.0
+        };
     }
 
     private static double calibratedDistance(Point2D.Double a, Point2D.Double b, double pixelWidth, double pixelHeight) {
@@ -208,31 +193,22 @@ public final class PurkinjeLengthCalculator {
     }
 
     /**
-     * "Area" of the whole Purkinje polyline, exactly as ImageJ's own Analyze &gt; Measure
-     * would report it for that ROI. See the class javadoc for what this number actually is.
+     * "Area" of the whole Purkinje polyline, exactly as ImageJ's own Analyze &gt; Measure would
+     * report it for that ROI. See the class javadoc for what this number actually is.
+     *
+     * <p>Runs ImageJ's real measurement pipeline ({@link Analyzer}) on a copy of the line, which
+     * requires temporarily making it the image's selection; whatever selection was there before
+     * is always restored.</p>
      */
     public static double totalArea(PolygonRoi purkinje, ImagePlus imp) {
-        return lineMeasureArea(purkinje, imp);
-    }
-
-    /**
-     * Runs ImageJ's real measurement pipeline ({@link Analyzer}) on {@code lineRoi} and
-     * returns whatever it reports in the Area column — reproducing exactly what a user
-     * would see selecting this ROI in the ROI Manager and clicking Measure, rather than
-     * computing anything independently. Temporarily sets {@code imp}'s active ROI to do
-     * so (required by {@link Analyzer}, which reads from the image's current selection),
-     * and always restores whatever selection was there before.
-     */
-    private static double lineMeasureArea(Roi lineRoi, ImagePlus imp) {
-        if (lineRoi == null) {
+        if (purkinje == null) {
             return Double.NaN;
         }
         Roi previousRoi = imp.getRoi();
         try {
-            imp.setRoi(lineRoi);
+            imp.setRoi((Roi) purkinje.clone(), false);
             ResultsTable rt = new ResultsTable();
-            Analyzer analyzer = new Analyzer(imp, Measurements.AREA, rt);
-            analyzer.measure();
+            new Analyzer(imp, Measurements.AREA, rt).measure();
             if (rt.size() == 0) {
                 return Double.NaN;
             }
@@ -241,7 +217,7 @@ public final class PurkinjeLengthCalculator {
             if (previousRoi == null) {
                 imp.deleteRoi();
             } else {
-                imp.setRoi(previousRoi);
+                imp.setRoi(previousRoi, false);
             }
         }
     }

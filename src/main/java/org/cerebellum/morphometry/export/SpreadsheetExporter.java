@@ -1,46 +1,48 @@
 package org.cerebellum.morphometry.export;
 
 import ij.measure.ResultsTable;
-import org.apache.poi.ss.usermodel.*;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.cerebellum.morphometry.Diagnostics;
 import org.cerebellum.morphometry.model.MorphometryResults;
+import org.cerebellum.morphometry.model.RunInfo;
 
-import java.io.*;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Exports a {@link MorphometryResults} to three targets:
  * <ol>
  *   <li>An ImageJ {@link ResultsTable} (displayed interactively via {@link #showResultsTable}).</li>
  *   <li>A plain UTF-8 CSV file.</li>
- *   <li>A native {@code .xlsx} workbook via Apache POI.</li>
+ *   <li>An {@code .xlsx} workbook, with a second "Run Info" sheet recording provenance.</li>
  * </ol>
  *
- * <p>All three reproduce the exact table layout described in the spec (shown here for the
- * standard 8-subsection case; any other count produces the same layout with that many
- * subsection rows, labeled "Section 1", "Section 2", … instead of anatomical names — see
- * {@link org.cerebellum.morphometry.geometry.FissurePartitioner#labelsForSubsectionCount}). The
- * Purkinje column's Area row, always empty before, now holds the whole line's total "area"
- * (see {@link org.cerebellum.morphometry.geometry.PurkinjeLengthCalculator} for what that
- * means):</p>
+ * <p>All three use the same layout (shown for the standard 8-subsection case; any other count
+ * produces the same layout with that many subsection rows, labelled "Section 1", "Section 2",
+ * &hellip;):</p>
  * <pre>
  * Measurement | Cerebellum | Grey Matter | Granular Layer | Molecular Layer | Purkinje
- * Area        | Total      | Grey        | Granular       | Molecular       | Total area
+ * Area        | Total      | Grey        | Granular       | Molecular       | Total "area"
  * Length      |            |             |                |                 | Total length
  * 2Cb         |            |             | Area           | Area            | Length
  * ...
  * 10Cb        |            |             | Area           | Area            | Length
  * </pre>
  *
- * <p>Separately-traced pieces of one cerebellum (see {@link
- * org.cerebellum.morphometry.geometry.ROIValidator}'s "Multiple instances" section) are pooled
- * into a single {@code MorphometryResults} upstream, by {@link
- * org.cerebellum.morphometry.measurement.MeasurementEngine#combine} — so there is always
- * exactly one table, whether the cerebellum was traced as one outline or several.</p>
- *
- * <p>All values are in the calibrated units reported by {@link MorphometryResults#getAreaUnit()} and
- * {@link MorphometryResults#getLengthUnit()}, so the numbers match whatever unit the image's
- * pixel calibration was set to (microns, millimetres, etc.).</p>
+ * <p>Values are in the image's calibrated units. Numbers are always written with a {@code .}
+ * decimal separator, whatever the computer's language settings: formatting with the default
+ * locale (as earlier versions did) produced {@code 1234,5678} on e.g. German or French systems,
+ * which broke the CSV for downstream tools and turned every value in the Excel file into text.</p>
  */
 public final class SpreadsheetExporter {
 
@@ -51,12 +53,16 @@ public final class SpreadsheetExporter {
     private static final int COL_GRANULAR    = 3;
     private static final int COL_MOLECULAR   = 4;
     private static final int COL_PURKINJE    = 5;
+    private static final int COLUMN_COUNT    = 6;
 
     // Row indices for the fixed part of the table
     private static final int ROW_HEADER            = 0;
     private static final int ROW_AREA              = 1;
     private static final int ROW_LENGTH            = 2;
     private static final int ROW_SUBSECTIONS_START = 3;
+
+    private static final String SHEET_RESULTS  = "Cerebellar Morphometry";
+    private static final String SHEET_RUN_INFO = "Run Info";
 
     private SpreadsheetExporter() {
     }
@@ -66,47 +72,38 @@ public final class SpreadsheetExporter {
     // -----------------------------------------------------------------------
 
     /**
-     * Builds a {@link ResultsTable}. The ResultsTable API is column-oriented, so we fake the
-     * required row-oriented layout by using the "Label" column as the first (Measurement)
-     * column, and making each logical column a ResultsTable column.
+     * Builds a {@link ResultsTable}. The ResultsTable API is column-oriented, so the row-oriented
+     * layout is produced by using the "Label" column as the first (Measurement) column.
      */
     public static ResultsTable buildResultsTable(MorphometryResults r) {
         ResultsTable rt = new ResultsTable();
         rt.setPrecision(4);
+        String[] headers = headers(r);
 
-        String cbCol   = "Cerebellum (" + r.getAreaUnit() + ")";
-        String greyCol = "Grey Matter (" + r.getAreaUnit() + ")";
-        String granCol = "Granular Layer (" + r.getAreaUnit() + ")";
-        String molCol  = "Molecular Layer (" + r.getAreaUnit() + ")";
-        String pkCol   = "Purkinje (" + r.getLengthUnit() + ")";
-
-        // Area row (Purkinje's "area" — see class javadoc — goes here too)
         rt.incrementCounter();
         rt.addLabel("Area");
-        rt.addValue(cbCol,   r.getCerebellumArea());
-        rt.addValue(greyCol, r.getGreyMatterArea());
-        rt.addValue(granCol, r.getGranularLayerArea());
-        rt.addValue(molCol,  r.getMolecularLayerArea());
-        rt.addValue(pkCol,   r.getTotalPurkinjeArea());
+        rt.addValue(headers[COL_CEREBELLUM], r.getCerebellumArea());
+        rt.addValue(headers[COL_GREY],       r.getGreyMatterArea());
+        rt.addValue(headers[COL_GRANULAR],   r.getGranularLayerArea());
+        rt.addValue(headers[COL_MOLECULAR],  r.getMolecularLayerArea());
+        rt.addValue(headers[COL_PURKINJE],   r.getTotalPurkinjeArea());
 
-        // Length row
         rt.incrementCounter();
         rt.addLabel("Length");
-        rt.addValue(cbCol,   Double.NaN);
-        rt.addValue(greyCol, Double.NaN);
-        rt.addValue(granCol, Double.NaN);
-        rt.addValue(molCol,  Double.NaN);
-        rt.addValue(pkCol,   r.getTotalPurkinjeLength());
+        rt.addValue(headers[COL_CEREBELLUM], Double.NaN);
+        rt.addValue(headers[COL_GREY],       Double.NaN);
+        rt.addValue(headers[COL_GRANULAR],   Double.NaN);
+        rt.addValue(headers[COL_MOLECULAR],  Double.NaN);
+        rt.addValue(headers[COL_PURKINJE],   r.getTotalPurkinjeLength());
 
-        // Per-subsection rows
         for (MorphometryResults.SubsectionResult sub : r.getSubsections()) {
             rt.incrementCounter();
             rt.addLabel(sub.getLabel());
-            rt.addValue(cbCol,   Double.NaN);
-            rt.addValue(greyCol, Double.NaN);
-            rt.addValue(granCol, sub.getGranularArea());
-            rt.addValue(molCol,  sub.getMolecularArea());
-            rt.addValue(pkCol,   sub.getPurkinjeLength());
+            rt.addValue(headers[COL_CEREBELLUM], Double.NaN);
+            rt.addValue(headers[COL_GREY],       Double.NaN);
+            rt.addValue(headers[COL_GRANULAR],   sub.getGranularArea());
+            rt.addValue(headers[COL_MOLECULAR],  sub.getMolecularArea());
+            rt.addValue(headers[COL_PURKINJE],   sub.getPurkinjeLength());
         }
         return rt;
     }
@@ -120,22 +117,26 @@ public final class SpreadsheetExporter {
     // CSV
     // -----------------------------------------------------------------------
 
+    /** Writes the results table as UTF-8 CSV. The file is replaced only once fully written. */
     public static void exportCSV(MorphometryResults r, File file) throws IOException {
-        try (PrintWriter pw = new PrintWriter(new OutputStreamWriter(new FileOutputStream(file), "UTF-8"))) {
+        writeAtomically(file, out -> {
+            Writer w = new BufferedWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8));
             for (String[] row : buildDataGrid(r)) {
-                pw.println(escapeCSVRow(row));
+                w.write(csvRow(row));
+                w.write(System.lineSeparator());
             }
-        }
+            w.flush();
+        });
     }
 
-    private static String escapeCSVRow(String[] cells) {
+    private static String csvRow(String[] cells) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < cells.length; i++) {
             if (i > 0) {
                 sb.append(',');
             }
             String cell = cells[i] == null ? "" : cells[i];
-            if (cell.contains(",") || cell.contains("\"") || cell.contains("\n")) {
+            if (cell.contains(",") || cell.contains("\"") || cell.contains("\n") || cell.contains("\r")) {
                 sb.append('"').append(cell.replace("\"", "\"\"")).append('"');
             } else {
                 sb.append(cell);
@@ -148,116 +149,78 @@ public final class SpreadsheetExporter {
     // XLSX
     // -----------------------------------------------------------------------
 
-    public static void exportXLSX(MorphometryResults r, File file) throws IOException {
-        try (Workbook wb = new XSSFWorkbook()) {
-            Sheet sheet = wb.createSheet("Cerebellar Morphometry");
+    /**
+     * Writes the results table, plus a "Run Info" sheet when {@code runInfo} is given, as an
+     * {@code .xlsx} workbook. Values are stored at full precision and displayed with four decimal
+     * places. The file is replaced only once fully written.
+     */
+    public static void exportXLSX(MorphometryResults r, RunInfo runInfo, File file) throws IOException {
+        XlsxWriter wb = new XlsxWriter();
 
-            CellStyle headerStyle = wb.createCellStyle();
-            Font headerFont = wb.createFont();
-            headerFont.setBold(true);
-            headerStyle.setFont(headerFont);
-            headerStyle.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
-            headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
-            headerStyle.setBorderBottom(BorderStyle.THIN);
+        XlsxWriter.Sheet sheet = wb.addSheet(SHEET_RESULTS).freeze(1, 1);
+        String[] headers = headers(r);
+        for (int c = 0; c < COLUMN_COUNT; c++) {
+            sheet.text(ROW_HEADER, c, headers[c], XlsxWriter.Style.HEADER);
+        }
 
-            CellStyle numberStyle = wb.createCellStyle();
-            DataFormat df = wb.createDataFormat();
-            numberStyle.setDataFormat(df.getFormat("0.0000"));
+        sheet.text(ROW_AREA, COL_MEASUREMENT, "Area", XlsxWriter.Style.BOLD);
+        sheet.number(ROW_AREA, COL_CEREBELLUM, r.getCerebellumArea(),     XlsxWriter.Style.BOLD_NUMBER);
+        sheet.number(ROW_AREA, COL_GREY,       r.getGreyMatterArea(),     XlsxWriter.Style.BOLD_NUMBER);
+        sheet.number(ROW_AREA, COL_GRANULAR,   r.getGranularLayerArea(),  XlsxWriter.Style.BOLD_NUMBER);
+        sheet.number(ROW_AREA, COL_MOLECULAR,  r.getMolecularLayerArea(), XlsxWriter.Style.BOLD_NUMBER);
+        sheet.number(ROW_AREA, COL_PURKINJE,   r.getTotalPurkinjeArea(),  XlsxWriter.Style.BOLD_NUMBER);
 
-            CellStyle sectionStyle = wb.createCellStyle();
-            Font sectionFont = wb.createFont();
-            sectionFont.setItalic(true);
-            sectionStyle.setFont(sectionFont);
+        sheet.text(ROW_LENGTH, COL_MEASUREMENT, "Length", XlsxWriter.Style.BOLD);
+        for (int c = COL_CEREBELLUM; c < COL_PURKINJE; c++) {
+            sheet.blank(ROW_LENGTH, c, XlsxWriter.Style.BOLD);
+        }
+        sheet.number(ROW_LENGTH, COL_PURKINJE, r.getTotalPurkinjeLength(), XlsxWriter.Style.BOLD_NUMBER);
 
-            CellStyle boldStyle = wb.createCellStyle();
-            Font boldFont = wb.createFont();
-            boldFont.setBold(true);
-            boldStyle.setFont(boldFont);
+        List<MorphometryResults.SubsectionResult> subs = r.getSubsections();
+        for (int i = 0; i < subs.size(); i++) {
+            MorphometryResults.SubsectionResult s = subs.get(i);
+            int row = ROW_SUBSECTIONS_START + i;
+            sheet.text(row, COL_MEASUREMENT, s.getLabel(), XlsxWriter.Style.ITALIC);
+            sheet.number(row, COL_GRANULAR,  s.getGranularArea(),   XlsxWriter.Style.NUMBER);
+            sheet.number(row, COL_MOLECULAR, s.getMolecularArea(),  XlsxWriter.Style.NUMBER);
+            sheet.number(row, COL_PURKINJE,  s.getPurkinjeLength(), XlsxWriter.Style.NUMBER);
+        }
 
-            CellStyle boldNumberStyle = wb.createCellStyle();
-            boldNumberStyle.cloneStyleFrom(numberStyle);
-            boldNumberStyle.setFont(boldFont);
-
-            String[][] data = buildDataGrid(r);
-
-            Row header = sheet.createRow(ROW_HEADER);
-            for (int c = 0; c < data[ROW_HEADER].length; c++) {
-                Cell cell = header.createCell(c);
-                cell.setCellValue(data[ROW_HEADER][c] == null ? "" : data[ROW_HEADER][c]);
-                cell.setCellStyle(headerStyle);
+        if (runInfo != null) {
+            XlsxWriter.Sheet info = wb.addSheet(SHEET_RUN_INFO).freeze(0, 1);
+            info.text(0, 0, "Field", XlsxWriter.Style.HEADER);
+            info.text(0, 1, "Value", XlsxWriter.Style.HEADER);
+            int row = 1;
+            for (String[] field : runInfo.getFields()) {
+                info.text(row, 0, field[0], XlsxWriter.Style.BOLD);
+                info.text(row, 1, field[1], XlsxWriter.Style.WRAP);
+                row++;
             }
-
-            for (int rowIdx = 1; rowIdx < data.length; rowIdx++) {
-                Row row = sheet.createRow(rowIdx);
-                String[] rowData = data[rowIdx];
-                boolean bold = rowIdx == ROW_AREA || rowIdx == ROW_LENGTH;
-                boolean isSubsection = rowIdx >= ROW_SUBSECTIONS_START;
-
-                for (int c = 0; c < rowData.length; c++) {
-                    Cell cell = row.createCell(c);
-                    String val = rowData[c];
-                    boolean isLabelCol = c == COL_MEASUREMENT;
-                    if (val == null || val.isEmpty()) {
-                        cell.setCellValue("");
-                        if (bold) {
-                            cell.setCellStyle(boldStyle);
-                        }
-                    } else if (isLabelCol) {
-                        cell.setCellValue(val);
-                        if (isSubsection) {
-                            cell.setCellStyle(sectionStyle);
-                        } else if (bold) {
-                            cell.setCellStyle(boldStyle);
-                        }
-                    } else {
-                        try {
-                            cell.setCellValue(Double.parseDouble(val));
-                            cell.setCellStyle(bold ? boldNumberStyle : numberStyle);
-                        } catch (NumberFormatException e) {
-                            cell.setCellValue(val);
-                            if (bold) {
-                                cell.setCellStyle(boldStyle);
-                            }
-                        }
-                    }
-                }
-            }
-
-            for (int c = 0; c < data[ROW_HEADER].length; c++) {
-                sheet.autoSizeColumn(c);
-            }
-            sheet.createFreezePane(1, 1);
-
-            try (FileOutputStream fos = new FileOutputStream(file)) {
-                wb.write(fos);
+            for (Diagnostics.Entry e : runInfo.getMessages()) {
+                info.text(row, 0, e.getLevel() == Diagnostics.Level.WARNING ? "Warning" : "Note", XlsxWriter.Style.BOLD);
+                info.text(row, 1, e.getMessage(), XlsxWriter.Style.WRAP);
+                row++;
             }
         }
+
+        writeAtomically(file, wb::write);
     }
 
     // -----------------------------------------------------------------------
-    // Shared grid builder (used by both CSV and XLSX paths)
+    // Shared grid builder
     // -----------------------------------------------------------------------
 
     /**
-     * Returns a 2D grid of String values (null == empty cell) matching the layout required by
-     * the spec. Numeric values are formatted to 4 decimal places.
+     * Returns the table as a 2D grid of strings (null == empty cell), as written to CSV. Numbers
+     * are formatted to 4 decimal places with a {@code .} separator; a value that could not be
+     * measured (NaN) is left empty.
      */
     public static String[][] buildDataGrid(MorphometryResults r) {
         List<MorphometryResults.SubsectionResult> subs = r.getSubsections();
-        int nRows = ROW_SUBSECTIONS_START + subs.size(); // header + area + length + N subsections
-        int nCols = 6;
+        String[][] g = new String[ROW_SUBSECTIONS_START + subs.size()][COLUMN_COUNT];
 
-        String[][] g = new String[nRows][nCols];
+        g[ROW_HEADER] = headers(r);
 
-        // Header row
-        g[ROW_HEADER][COL_MEASUREMENT] = "Measurement";
-        g[ROW_HEADER][COL_CEREBELLUM]  = "Cerebellum (" + r.getAreaUnit() + ")";
-        g[ROW_HEADER][COL_GREY]        = "Grey Matter (" + r.getAreaUnit() + ")";
-        g[ROW_HEADER][COL_GRANULAR]    = "Granular Layer (" + r.getAreaUnit() + ")";
-        g[ROW_HEADER][COL_MOLECULAR]   = "Molecular Layer (" + r.getAreaUnit() + ")";
-        g[ROW_HEADER][COL_PURKINJE]    = "Purkinje (" + r.getLengthUnit() + ")";
-
-        // Area row (Purkinje's "area" — see class javadoc — goes in this row too)
         g[ROW_AREA][COL_MEASUREMENT] = "Area";
         g[ROW_AREA][COL_CEREBELLUM]  = fmt(r.getCerebellumArea());
         g[ROW_AREA][COL_GREY]        = fmt(r.getGreyMatterArea());
@@ -265,11 +228,9 @@ public final class SpreadsheetExporter {
         g[ROW_AREA][COL_MOLECULAR]   = fmt(r.getMolecularLayerArea());
         g[ROW_AREA][COL_PURKINJE]    = fmt(r.getTotalPurkinjeArea());
 
-        // Length row
         g[ROW_LENGTH][COL_MEASUREMENT] = "Length";
         g[ROW_LENGTH][COL_PURKINJE]    = fmt(r.getTotalPurkinjeLength());
 
-        // Per-subsection rows
         for (int i = 0; i < subs.size(); i++) {
             MorphometryResults.SubsectionResult s = subs.get(i);
             int row = ROW_SUBSECTIONS_START + i;
@@ -278,11 +239,50 @@ public final class SpreadsheetExporter {
             g[row][COL_MOLECULAR]   = fmt(s.getMolecularArea());
             g[row][COL_PURKINJE]    = fmt(s.getPurkinjeLength());
         }
-
         return g;
     }
 
+    private static String[] headers(MorphometryResults r) {
+        String[] h = new String[COLUMN_COUNT];
+        h[COL_MEASUREMENT] = "Measurement";
+        h[COL_CEREBELLUM]  = "Cerebellum (" + r.getAreaUnit() + ")";
+        h[COL_GREY]        = "Grey Matter (" + r.getAreaUnit() + ")";
+        h[COL_GRANULAR]    = "Granular Layer (" + r.getAreaUnit() + ")";
+        h[COL_MOLECULAR]   = "Molecular Layer (" + r.getAreaUnit() + ")";
+        h[COL_PURKINJE]    = "Purkinje (" + r.getLengthUnit() + ")";
+        return h;
+    }
+
     private static String fmt(double v) {
-        return String.format("%.4f", v);
+        return Double.isFinite(v) ? String.format(Locale.ROOT, "%.4f", v) : null;
+    }
+
+    // -----------------------------------------------------------------------
+    // File handling
+    // -----------------------------------------------------------------------
+
+    private interface Body {
+        void writeTo(OutputStream out) throws IOException;
+    }
+
+    /**
+     * Writes to a temporary file next to {@code target} and then moves it into place, so a failed
+     * or interrupted export never leaves a truncated file behind (or destroys the previous one).
+     */
+    private static void writeAtomically(File target, Body body) throws IOException {
+        Path dest = target.toPath().toAbsolutePath();
+        Path tmp = Files.createTempFile(dest.getParent(), "." + dest.getFileName(), ".tmp");
+        try {
+            try (OutputStream out = Files.newOutputStream(tmp)) {
+                body.writeTo(out);
+            }
+            try {
+                Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(tmp);
+        }
     }
 }
