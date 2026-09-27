@@ -9,6 +9,7 @@ import ij.process.ByteProcessor;
 import ij.process.FloatPolygon;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -59,6 +60,8 @@ public final class SyntheticSection {
     private final double fissureOuterRadius;
     private final double pixelSize;
     private final String unit;
+    private final boolean baseFissure;
+    private final boolean purkinjeCounterclockwise;
 
     private SyntheticSection(Builder b) {
         this.pinched = b.pinched;
@@ -68,6 +71,8 @@ public final class SyntheticSection {
         this.fissureOuterRadius = b.fissureOuterRadius;
         this.pixelSize = b.pixelSize;
         this.unit = b.unit;
+        this.baseFissure = b.baseFissure;
+        this.purkinjeCounterclockwise = b.purkinjeCounterclockwise;
     }
 
     public static Builder builder() {
@@ -111,6 +116,9 @@ public final class SyntheticSection {
             pts.add(polar(R_PURKINJE, deg));
         }
         pts.add(polar(R_PURKINJE, PURKINJE_END_DEG));
+        if (purkinjeCounterclockwise) {
+            Collections.reverse(pts);
+        }
         return (PolygonRoi) named(polyline(pts), "PL");
     }
 
@@ -135,6 +143,14 @@ public final class SyntheticSection {
                 pts.add(polar(r, angles[k]));
             }
             result.add((PolygonRoi) named(polyline(pts), "FL" + (k + 1)));
+        }
+        if (baseFissure) {
+            // The SOP's "honorary" fissure: a line across the base of the cerebellum, through the
+            // peduncle gap at 90 degrees, separating the first and last lobules.
+            List<float[]> pts = new ArrayList<>();
+            pts.add(polar(fissureOuterRadius, 90));
+            pts.add(polar(fissureInnerRadius, 90));
+            result.add((PolygonRoi) named(polyline(pts), "FL" + (angles.length + 1)));
         }
         return result;
     }
@@ -293,6 +309,8 @@ public final class SyntheticSection {
         private double fissureOuterRadius = R_CEREBELLUM + 6;
         private double pixelSize = 1.0;
         private String unit = "pixel";
+        private boolean baseFissure;
+        private boolean purkinjeCounterclockwise;
 
         /** Extend WM and Granular+WM out through the peduncle (default {@code true}). */
         public Builder pinched(boolean pinched) {
@@ -315,6 +333,18 @@ public final class SyntheticSection {
         public Builder fissureRadii(double outer, double inner) {
             this.fissureOuterRadius = outer;
             this.fissureInnerRadius = inner;
+            return this;
+        }
+
+        /** Adds an extra fissure line across the base (the SOP's way of closing the ring). */
+        public Builder baseFissure(boolean baseFissure) {
+            this.baseFissure = baseFissure;
+            return this;
+        }
+
+        /** Traces the Purkinje line in the opposite (counterclockwise) direction. */
+        public Builder purkinjeCounterclockwise(boolean counterclockwise) {
+            this.purkinjeCounterclockwise = counterclockwise;
             return this;
         }
 

@@ -113,7 +113,7 @@ public final class CerebellarMorphometryPlugin implements PlugIn {
                     + "grey matter. Technical details are in the Log window.");
             return;
         }
-        MorphometryResults combined = MeasurementEngine.combine(results);
+        MorphometryResults combined = MeasurementEngine.combine(results, diag);
         if (results.size() > 1) {
             diag.note("Pooled " + results.size() + " traced pieces into one set of results with "
                     + combined.getSubsections().size() + " section row(s).");
@@ -258,8 +258,9 @@ public final class CerebellarMorphometryPlugin implements PlugIn {
             gd.addMessage("Save results");
             gd.addCheckbox("Save_CSV", Prefs.get(PREFS + "csv", true));
             gd.addCheckbox("Save_Excel workbook (.xlsx)", Prefs.get(PREFS + "xlsx", true));
-            gd.addDirectoryField("Output_folder", Prefs.get(PREFS + "folder", defaultFolder(imp)), 30);
-            gd.addMessage("Files are named after the image. Leave the folder empty to be asked.");
+            gd.addDirectoryField("Output_folder", defaultFolder(imp), 30);
+            gd.addMessage("Files are named after the image and saved next to it unless you pick\n"
+                    + "another folder. Leave the folder empty to be asked.");
             gd.addHelp("https://github.com/dabcow/CerebellumInformationGrabber#readme");
             gd.showDialog();
             if (gd.wasCanceled()) {
@@ -289,10 +290,19 @@ public final class CerebellarMorphometryPlugin implements PlugIn {
             return o;
         }
 
-        /** The folder the image was opened from, if known. */
+        /**
+         * The folder the image was opened from, so each section's results land next to its image
+         * (one folder per section, all images named alike, e.g. Montage.tif). Deliberately not the
+         * last folder used: with identically named images, that would put the next section's
+         * Montage.csv on top of the previous section's. Falls back to the last folder used only
+         * for an image that has never been saved.
+         */
         private static String defaultFolder(ImagePlus imp) {
             FileInfo fi = imp.getOriginalFileInfo();
-            return fi != null && fi.directory != null ? fi.directory : "";
+            if (fi != null && fi.directory != null && !fi.directory.isEmpty()) {
+                return fi.directory;
+            }
+            return Prefs.get(PREFS + "folder", "");
         }
     }
 }

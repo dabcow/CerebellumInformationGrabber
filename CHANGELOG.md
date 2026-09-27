@@ -27,9 +27,11 @@ per-lobule results from 1.0.0 and 1.1.0; re-run earlier sections instead.
   build could never find a neighbour, because distinct connected components are never
   adjacent. So every sliver was silently dropped with its area. Slivers are now merged whole
   into the lobule they border.
-- **Standard lobule names are withheld when they would be wrong.** A closed ring cut by eight
-  fissures gives eight sections, one of which is 2Cb and 10Cb fused. 1.0.0 still named them
-  2Cb … 10Cb. Generic names are now used, with a warning explaining how to separate the ends.
+- **Joined first and last lobules are reported, and never given standard names.** When the ring
+  of grey matter isn't closed at the base, one section holds both the first and last lobule.
+  1.0.0 only logged a note that could be misread. When that made eight sections, it still named
+  them 2Cb … 10Cb. This is now a warning that a section is missing, naming the fix (a fissure line
+  across the base, as in the lab SOP). Generic names are used in that case.
 - **Lobules are ordered by their own stretch of the Purkinje line** (median position) rather
   than by projecting each lobule's centroid onto it. A curved or branched lobule's centroid
   can sit nearer a neighbour's stretch of the line.
@@ -81,12 +83,21 @@ per-lobule results from 1.0.0 and 1.1.0; re-run earlier sections instead.
   or note if not.
 - Name labels for each section on the overlay, and a 12-colour palette (the README already
   promised 12; the code had 8).
-- *Output folder* field in the dialog, so a run can be fully scripted.
-- The dialog remembers its settings between runs.
+- *Output folder* field in the dialog, so a run can be fully scripted. It defaults to the folder
+  the image was opened from, so with one folder per section (as in the lab SOP) each section's
+  results are saved next to its `Montage.tif`.
+- The dialog remembers its checkbox settings between runs.
+- Warning when the Purkinje line is traced counterclockwise. Sections are numbered from the
+  line's first point, so a counterclockwise trace numbers them in reverse (the SOP's "section
+  labels reversed" problem).
 - Asks before overwriting existing result files (interactive runs only).
 - Log note listing ROIs whose names weren't recognised.
-- Test suite (68 tests): name matching, a synthetic section with closed-form answers, and the
-  CSV/XLSX output, which is read back with Apache POI.
+- Test suite (105 tests): name matching, a synthetic section with closed-form answers, and the
+  CSV/XLSX output, which is read back with Apache POI. `SopScenariosTest` encodes the lab SOP's
+  workflow: every name in its naming table, its detached-pieces example (`CB` … `4CB`, `fl1`),
+  closing the ring with a fissure line across the base, clockwise and counterclockwise Purkinje
+  lines, XOR-trimmed outlines, one Purkinje segment per section, and micrometer calibration. On
+  these scenarios, 1.1.0 gives the same section counts and names as 1.0.0.
 
 ### Changed
 
